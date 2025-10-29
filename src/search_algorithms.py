@@ -77,7 +77,7 @@ def _is_better_goal(candidate, current_best):
 
 # Uninformed Search Algorithms
 
-def dfs(problem, observer=None):
+def dfs(problem, observer=None, stop_on_first_goal=False):
     """
     Depth-First Search algorithm.
     Select one option, try it, go back when there are no more options.
@@ -98,6 +98,19 @@ def dfs(problem, observer=None):
         
         # Check if the node is a goal
         if node.state in problem.destinations:
+            if stop_on_first_goal:
+                _notify(
+                    observer,
+                    algorithm="dfs",
+                    action="goal",
+                    current=node.state,
+                    frontier=[n.state for n in frontier],
+                    explored=sorted(explored),
+                    path=node.get_path(),
+                    path_cost=node.path_cost,
+                    nodes_created=node_count,
+                )
+                return solution(node, problem, node_count)
             if _is_better_goal(node, best_node):
                 best_node = node
             continue
@@ -164,7 +177,7 @@ def dfs(problem, observer=None):
     # No solution found
     return None
 
-def bfs(problem, observer=None):
+def bfs(problem, observer=None, stop_on_first_goal=False):
     """
     Breadth-First Search algorithm.
     Expand all options one level at a time.
@@ -185,6 +198,19 @@ def bfs(problem, observer=None):
         
         # Check if the node is a goal
         if node.state in problem.destinations:
+            if stop_on_first_goal:
+                _notify(
+                    observer,
+                    algorithm="bfs",
+                    action="goal",
+                    current=node.state,
+                    frontier=[n.state for n in frontier],
+                    explored=sorted(explored),
+                    path=node.get_path(),
+                    path_cost=node.path_cost,
+                    nodes_created=node_count,
+                )
+                return solution(node, problem, node_count)
             if _is_better_goal(node, best_node):
                 best_node = node
             continue
@@ -266,7 +292,7 @@ class PriorityNode(Node):
             return self.state < other.state
         return self.priority < other.priority
 
-def gbfs(problem, observer=None):
+def gbfs(problem, observer=None, stop_on_first_goal=False):
     """
     Greedy Best-First Search algorithm.
     Use only the heuristic cost to reach the goal from the current node to evaluate the node.
@@ -301,6 +327,20 @@ def gbfs(problem, observer=None):
         
         # Check if the node is a goal
         if node.state in problem.destinations:
+            if stop_on_first_goal:
+                _notify(
+                    observer,
+                    algorithm="gbfs",
+                    action="goal",
+                    current=node.state,
+                    frontier=[n.state for _, _, n in frontier],
+                    explored=sorted(explored),
+                    path=node.get_path(),
+                    path_cost=node.path_cost,
+                    heuristic=h(node.state),
+                    nodes_created=node_count,
+                )
+                return solution(node, problem, node_count)
             if _is_better_goal(node, best_node):
                 best_node = node
             continue
@@ -388,7 +428,7 @@ def gbfs(problem, observer=None):
     # No solution found
     return None
 
-def astar(problem, observer=None):
+def astar(problem, observer=None, stop_on_first_goal=False):
     """
     A* Search algorithm.
     Use both the cost to reach the goal from the current node and the cost to reach this node to evaluate the node.
@@ -425,6 +465,21 @@ def astar(problem, observer=None):
         
         # Check if the node is a goal
         if node.state in problem.destinations:
+            if stop_on_first_goal:
+                _notify(
+                    observer,
+                    algorithm="astar",
+                    action="goal",
+                    current=node.state,
+                    frontier=[n.state for _, _, n in frontier],
+                    explored=sorted(explored),
+                    path=node.get_path(),
+                    path_cost=node.path_cost,
+                    heuristic=h(node.state),
+                    f_cost=node.path_cost + h(node.state),
+                    nodes_created=node_count,
+                )
+                return solution(node, problem, node_count)
             if _is_better_goal(node, best_node):
                 best_node = node
             continue
@@ -514,7 +569,7 @@ def astar(problem, observer=None):
 
 # Custom Search Algorithms
 
-def cus1(problem, observer=None):
+def cus1(problem, observer=None, stop_on_first_goal=False):
     """
     Custom Search Strategy 1: Iterative Deepening Depth-First Search (IDDFS).
     An uninformed method to find a path to reach the goal.
@@ -536,6 +591,21 @@ def cus1(problem, observer=None):
             
             # Check if the node is a goal
             if node.state in problem.destinations:
+                if stop_on_first_goal:
+                    _notify(
+                        observer,
+                        algorithm="cus1",
+                        action="goal",
+                        current=node.state,
+                        frontier=[n.state for n, _ in stack],
+                        explored=sorted(visited),
+                        path=node.get_path(),
+                        path_cost=node.path_cost,
+                        depth=depth,
+                        depth_limit=depth_limit,
+                        nodes_created=node_count,
+                    )
+                    return solution(node, problem, node_count)
                 if _is_better_goal(node, best_node):
                     best_node = node
                 continue
@@ -605,7 +675,7 @@ def cus1(problem, observer=None):
         if depth_limit > 1000:
             return None
 
-def cus2(problem, observer=None):
+def cus2(problem, observer=None, stop_on_first_goal=False):
     """
     Custom Search Strategy 2: Bidirectional Search.
     An informed method to find a shortest path (with least moves) to reach the goal.
@@ -642,9 +712,36 @@ def cus2(problem, observer=None):
             
             # Check if forward search has reached any node explored by backward search
             if forward_node.state in backward_explored:
-                # Found an intersection - check if it's better than current best
+                # Found an intersection
                 backward_node = backward_explored[forward_node.state]
                 total_cost = forward_node.path_cost + backward_node.path_cost
+                if stop_on_first_goal:
+                    # Build and return immediately
+                    forward_path = forward_node.get_path()
+                    backward_path = backward_node.get_path()
+                    backward_path.reverse()
+                    if backward_path:
+                        backward_path.pop(0)
+                    complete_path = forward_path + backward_path
+                    result_node = Node(target)
+                    result_node.path_cost = total_cost
+                    def custom_path():
+                        return " ".join(map(str, complete_path))
+                    result_node.get_path_string = custom_path
+                    _notify(
+                        observer,
+                        algorithm="cus2",
+                        action="goal",
+                        current=target,
+                        frontier_forward=[n.state for n in forward_frontier],
+                        frontier_backward=[n.state for n in backward_frontier],
+                        explored_forward=sorted(forward_explored.keys()),
+                        explored_backward=sorted(backward_explored.keys()),
+                        path=list(complete_path),
+                        path_cost=total_cost,
+                        nodes_created=node_count,
+                    )
+                    return solution(result_node, problem, node_count)
                 if total_cost < best_cost:
                     best_intersection = (forward_node, backward_node)
                     best_cost = total_cost
@@ -689,9 +786,35 @@ def cus2(problem, observer=None):
             
             # Check if backward search has reached any node explored by forward search
             if backward_node.state in forward_explored:
-                # Found an intersection - check if it's better than current best
+                # Found an intersection
                 forward_node = forward_explored[backward_node.state]
                 total_cost = forward_node.path_cost + backward_node.path_cost
+                if stop_on_first_goal:
+                    forward_path = forward_node.get_path()
+                    backward_path = backward_node.get_path()
+                    backward_path.reverse()
+                    if backward_path:
+                        backward_path.pop(0)
+                    complete_path = forward_path + backward_path
+                    result_node = Node(target)
+                    result_node.path_cost = total_cost
+                    def custom_path():
+                        return " ".join(map(str, complete_path))
+                    result_node.get_path_string = custom_path
+                    _notify(
+                        observer,
+                        algorithm="cus2",
+                        action="goal",
+                        current=target,
+                        frontier_forward=[n.state for n in forward_frontier],
+                        frontier_backward=[n.state for n in backward_frontier],
+                        explored_forward=sorted(forward_explored.keys()),
+                        explored_backward=sorted(backward_explored.keys()),
+                        path=list(complete_path),
+                        path_cost=total_cost,
+                        nodes_created=node_count,
+                    )
+                    return solution(result_node, problem, node_count)
                 if total_cost < best_cost:
                     best_intersection = (forward_node, backward_node)
                     best_cost = total_cost

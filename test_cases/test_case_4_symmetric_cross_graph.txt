@@ -1,0 +1,33 @@
+Nodes:
+1: (0,0)         # center
+2: (-2,0)        # left
+3: (2,0)         # right
+4: (0,2)         # up
+5: (0,-2)        # down
+6: (-4,0)
+7: (4,0)
+8: (0,4)
+9: (0,-4)
+Edges:
+# Arms from center (bidirectional for symmetry)
+(1,2): 1
+(2,1): 1
+(1,3): 1
+(3,1): 1
+(1,4): 1
+(4,1): 1
+(1,5): 1
+(5,1): 1
+# Extend arms equally
+(2,6): 1
+(6,2): 1
+(3,7): 1
+(7,3): 1
+(4,8): 1
+(8,4): 1
+(5,9): 1
+(9,5): 1
+Origin:
+6
+Destinations:
+7
