@@ -103,7 +103,8 @@ def parse_problem(filename):
             
             # Parse nodes
             if section == 'nodes':
-                match = re.match(r'(\d+):\s*\((\d+),(\d+)\)', line)
+                # Support optional spaces and negative coordinates
+                match = re.match(r'(\d+):\s*\((-?\d+),\s*(-?\d+)\)', line)
                 if match:
                     node_id = int(match.group(1))
                     x = int(match.group(2))

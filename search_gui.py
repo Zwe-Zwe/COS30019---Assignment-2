@@ -35,7 +35,7 @@ ALGO_HELP = {
     "GBFS": "Greedy best-first using Euclidean heuristic; fast but not optimal.",
     "A*": "f=g+h with Euclidean heuristic; often optimal and efficient.",
     "CUS1": "Iterative Deepening DFS; complete like BFS with low memory.",
-    "CUS2": "Bidirectional search; grows from start and goal to meet in the middle.",
+    "CUS2": "Bidirectional A* (informed); expands from start and goal and meets in the middle.",
 }
 
 
@@ -56,8 +56,8 @@ class SearchGUI(tk.Tk):
         self.problem_path = None
         self.results = {}  # algo -> metrics dict
         self.current_algo_to_draw = None
-        self.stop_on_first_goal = tk.BooleanVar(value=False)
         self.draw_edge_costs = tk.BooleanVar(value=True)
+        self.show_legend = tk.BooleanVar(value=True)
         self._run_thread = None
         self._stop_flag = threading.Event()
 
@@ -81,20 +81,25 @@ class SearchGUI(tk.Tk):
 
     # ---------- Layout ----------
     def _build_layout(self):
-        self.columnconfigure(0, weight=0)
+        # Narrower left pane, give most space to the graph/table on the right
+        LEFT_WIDTH = 380
+        self.columnconfigure(0, weight=0, minsize=LEFT_WIDTH)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
         # Left control panel
         left = ttk.Frame(self, padding=10)
         left.grid(row=0, column=0, sticky="ns")
+        # Keep left panel from expanding beyond intended width
+        left.grid_propagate(False)
 
         # File chooser
         file_grp = ttk.LabelFrame(left, text="Test Case")
         file_grp.pack(fill="x", pady=(0, 10))
 
         self.file_var = tk.StringVar()
-        self.file_combo = ttk.Combobox(file_grp, textvariable=self.file_var, state="readonly", width=45)
+        # Narrower combo to prevent left pane from growing too wide
+        self.file_combo = ttk.Combobox(file_grp, textvariable=self.file_var, state="readonly", width=32)
         self.file_combo.pack(side="left", padx=(8, 4), pady=8)
         self.file_combo.bind("<<ComboboxSelected>>", lambda e: self._load_problem())
 
@@ -111,12 +116,13 @@ class SearchGUI(tk.Tk):
             row = ttk.Frame(algo_grp)
             row.pack(fill="x", padx=6, pady=2)
             ttk.Checkbutton(row, text=name, variable=self.selected_algos[name]).pack(side="left")
-            ttk.Label(row, text=ALGO_HELP[name], foreground="#666").pack(side="left", padx=6)
+            # Wrap long help text to keep left panel compact
+            ttk.Label(row, text=ALGO_HELP[name], foreground="#666", wraplength=260, justify="left").pack(side="left", padx=6)
 
         opt_row = ttk.Frame(algo_grp)
         opt_row.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Checkbutton(opt_row, text="Stop at first goal", variable=self.stop_on_first_goal).pack(side="left")
-        ttk.Checkbutton(opt_row, text="Show edge costs", variable=self.draw_edge_costs, command=self._redraw_canvas).pack(side="left", padx=(10, 0))
+        ttk.Checkbutton(opt_row, text="Show edge costs", variable=self.draw_edge_costs, command=self._redraw_canvas).pack(side="left")
+        ttk.Checkbutton(opt_row, text="Show legend", variable=self.show_legend, command=self._redraw_canvas).pack(side="left", padx=(10, 0))
 
         btn_row = ttk.Frame(algo_grp)
         btn_row.pack(fill="x", padx=6, pady=(4, 8))
@@ -187,11 +193,12 @@ class SearchGUI(tk.Tk):
         table_grp = ttk.LabelFrame(right, text="Results (click to visualize a path)")
         table_grp.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
 
-        cols = ("Algorithm", "Goal", "Cost", "PathLen", "Nodes", "Time(ms)", "Trace")
+        cols = ("Algorithm", "Goal", "Cost", "PathLen", "Path", "Nodes", "Time(ms)", "Trace")
         self.table = ttk.Treeview(table_grp, columns=cols, show="headings", height=12)
+        col_widths = {"Algorithm": 90, "Goal": 60, "Cost": 60, "PathLen": 70, "Path": 200, "Nodes": 70, "Time(ms)": 80, "Trace": 60}
         for c in cols:
             self.table.heading(c, text=c)
-            self.table.column(c, anchor="center", width=110)
+            self.table.column(c, anchor="center" if c != "Path" else "w", width=col_widths.get(c, 110))
         self.table.pack(fill="both", expand=True)
         self.table.bind("<<TreeviewSelect>>", self._on_table_select)
 
@@ -301,10 +308,28 @@ class SearchGUI(tk.Tk):
             c2 = self._world_to_canvas(x2, y2, bbox)
             self.canvas.create_line(*c1, *c2, fill="#9aa0a6", width=2, arrow="last", arrowshape=(10, 12, 4))
             if self.draw_edge_costs.get():
-                mx = (c1[0] + c2[0]) / 2
-                my = (c1[1] + c2[1]) / 2
-                self.canvas.create_rectangle(mx - 14, my - 10, mx + 14, my + 10, fill="#fff", outline="#bbb")
-                self.canvas.create_text(mx, my, text=str(cost), fill="#202124", font=("Consolas", 10))
+                # Show cost label: numeric only, positioned on edge with smart offset
+                dx = c2[0] - c1[0]
+                dy = c2[1] - c1[1]
+                length = (dx*dx + dy*dy) ** 0.5 or 1.0
+                # Position at midpoint along edge
+                t = 0.5
+                px = c1[0] + dx * t
+                py = c1[1] + dy * t
+                # Perpendicular offset to avoid overlapping the line
+                nx = -dy / length
+                ny = dx / length
+                # Offset to one side based on edge direction for consistency
+                side = 1 if u < v else -1
+                off = 10 * side
+                lx = px + nx * off
+                ly = py + ny * off
+                # Draw numeric cost only (minimal clutter)
+                text_id = self.canvas.create_text(lx, ly, text=str(cost), fill="#202124", font=("Consolas", 9))
+                bx1, by1, bx2, by2 = self.canvas.bbox(text_id)
+                pad = 2
+                rect_id = self.canvas.create_rectangle(bx1 - pad, by1 - pad, bx2 + pad, by2 + pad, fill="#fff", outline="")
+                self.canvas.tag_raise(text_id, rect_id)
 
         # Draw selected path (under nodes) when not animating
         if self.current_algo_to_draw and self.current_algo_to_draw in self.results and not self.trace:
@@ -374,7 +399,7 @@ class SearchGUI(tk.Tk):
                     break
                 fn = ALGO_FUNCS[name]
                 t0 = time.perf_counter()
-                result = fn(self.problem, observer=None, stop_on_first_goal=self.stop_on_first_goal.get())
+                result = fn(self.problem, observer=None)
                 t1 = time.perf_counter()
 
                 if not result:
@@ -450,7 +475,8 @@ class SearchGUI(tk.Tk):
             goal = r["goal"] if r["goal"] is not None else "None"
             cost = r["cost"] if r["cost"] is not None else "—"
             path_len = len(r["path"]) if r["path"] else 0
-            self.table.insert("", tk.END, iid=name, values=(name, goal, cost, path_len, r["nodes"], f"{r['time_ms']:.2f}", r["trace"]))
+            path_str = " → ".join(map(str, r["path"])) if r["path"] else "—"
+            self.table.insert("", tk.END, iid=name, values=(name, goal, cost, path_len, path_str, r["nodes"], f"{r['time_ms']:.2f}", r["trace"]))
 
     def _on_table_select(self, _):
         sel = self.table.selection()
@@ -514,11 +540,28 @@ class SearchGUI(tk.Tk):
 
         def worker():
             fn = ALGO_FUNCS[algo]
-            result = fn(self.problem, observer=observer, stop_on_first_goal=self.stop_on_first_goal.get())
+            t0 = time.perf_counter()
+            result = fn(self.problem, observer=observer)
+            t1 = time.perf_counter()
+            
             if result:
                 goal, nodes_created, path_str = result
                 path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
                 self.anim_result_path = path_nodes
+                
+                # Store result in results dict for table display
+                cost = self._compute_path_cost(path_nodes)
+                metrics = {
+                    "goal": goal,
+                    "nodes": nodes_created,
+                    "path": path_nodes,
+                    "cost": cost,
+                    "time_ms": (t1 - t0) * 1000,
+                    "trace": len(self.trace),
+                }
+                self.results[algo] = metrics
+                self.after(0, self._refresh_table)
+            
             self.after(0, self._on_animation_ready)
 
         self._stop_flag.clear()
@@ -633,14 +676,55 @@ class SearchGUI(tk.Tk):
             self.canvas.create_text(cx, cy, text=str(current), fill="#ffffff", font=("Segoe UI", 11, "bold"))
 
     def _draw_legend(self):
-        # Draw a compact legend in the top-right corner
+        if not self.show_legend.get():
+            return
+        # Draw a compact legend in a corner that minimizes overlap with node positions
         w = max(self.canvas.winfo_width(), 1)
         h = max(self.canvas.winfo_height(), 1)
         pad = 10
-        x0 = w - 220 - pad
-        y0 = pad
-        x1 = w - pad
-        y1 = y0 + 150
+
+        # Legend dimensions (slightly smaller for laptops)
+        box_w = 200
+        row_h = 18
+        rows = 8
+        box_h = 14 + rows * row_h + 10  # top padding + rows + bottom padding
+
+        # Compute candidate corners: top-right, top-left, bottom-right, bottom-left
+        candidates = [
+            (w - box_w - pad, pad),
+            (pad, pad),
+            (w - box_w - pad, h - box_h - pad),
+            (pad, h - box_h - pad),
+        ]
+
+        # Estimate node canvas positions to avoid covering them
+        bbox = self._world_bounds()
+        nodes_xy = []
+        if self.problem and self.problem.nodes:
+            for nid, (x, y) in self.problem.nodes.items():
+                cx, cy = self._world_to_canvas(x, y, bbox)
+                nodes_xy.append((cx, cy))
+
+        def overlaps(x0, y0):
+            x1 = x0 + box_w
+            y1 = y0 + box_h
+            # consider a radius around node labels
+            node_r = 20
+            for cx, cy in nodes_xy:
+                if (x0 - node_r) <= cx <= (x1 + node_r) and (y0 - node_r) <= cy <= (y1 + node_r):
+                    return True
+            return False
+
+        # Pick first non-overlapping position, or default to top-right
+        x0, y0 = candidates[0]
+        for cand in candidates:
+            if not overlaps(*cand):
+                x0, y0 = cand
+                break
+
+        x1 = x0 + box_w
+        y1 = y0 + box_h
+
         # background
         self.canvas.create_rectangle(x0, y0, x1, y1, fill="#ffffff", outline="#cccccc")
 
@@ -655,19 +739,19 @@ class SearchGUI(tk.Tk):
 
         y = y0 + 14
         item(y, "#34a853", "#0f9d58", "Start")
-        y += 18
+        y += row_h
         item(y, "#ea4335", "#c5221f", "Goal")
-        y += 18
+        y += row_h
         item(y, "#fdd663", "#fbbc04", "Frontier")
-        y += 18
+        y += row_h
         item(y, "#5e97f6", "#1a73e8", "Explored")
-        y += 18
+        y += row_h
         item(y, "#f9ab00", "#e37400", "Current")
-        y += 18
+        y += row_h
         item(y, "#34a853", "#34a853", "Path", is_line=True)
-        y += 18
+        y += row_h
         item(y, "#ff8a65", "#d84315", "Frontier (back)")
-        y += 18
+        y += row_h
         item(y, "#ba68c8", "#8e24aa", "Explored (back)")
     def _export_csv(self):
         if not self.results:

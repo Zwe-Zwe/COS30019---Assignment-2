@@ -2,6 +2,7 @@
 
 from collections import deque
 import heapq
+from math import inf
 from src.parser import Problem
 
 class Node:
@@ -77,110 +78,64 @@ def _is_better_goal(candidate, current_best):
 
 # Uninformed Search Algorithms
 
-def dfs(problem, observer=None, stop_on_first_goal=False):
-    """
-    Depth-First Search algorithm.
-    Select one option, try it, go back when there are no more options.
-    """
-    # Initialize the frontier with the origin node
+def dfs(problem, observer=None, stop_on_first_goal=True):
     origin_node = Node(problem.origin)
     frontier = [origin_node]
-    # Keep track of explored nodes to avoid cycles
+
     explored = set()
-    # Keep track of the number of nodes created
     node_count = 1
-    # Track the best goal encountered so far
-    best_node = None
-    
+
     while frontier:
-        # Pop the last node (LIFO)
         node = frontier.pop()
-        
-        # Check if the node is a goal
+
+        # skip if already expanded
+        if node.state in explored:
+            continue
+
+        # goal?
         if node.state in problem.destinations:
-            if stop_on_first_goal:
-                _notify(
-                    observer,
-                    algorithm="dfs",
-                    action="goal",
+            _notify(observer, algorithm="dfs", action="goal",
                     current=node.state,
                     frontier=[n.state for n in frontier],
                     explored=sorted(explored),
                     path=node.get_path(),
                     path_cost=node.path_cost,
-                    nodes_created=node_count,
-                )
-                return solution(node, problem, node_count)
-            if _is_better_goal(node, best_node):
-                best_node = node
-            continue
+                    nodes_created=node_count)
+            return solution(node, problem, node_count)
 
-        # Skip expanding nodes that can no longer improve the best solution
-        if best_node and node.path_cost > best_node.path_cost:
-            continue
-
-        if node.state in explored:
-            continue
-        
-        # Add the node to the explored set
         explored.add(node.state)
-        
-        # Get neighbors and add them to the frontier if not already explored
+
         neighbors = problem.get_neighbors(node.state)
-        
-        # Sort neighbors by node_id in ascending order
-        neighbors.sort(key=lambda x: x[0])
-        
-        # Reverse the order to ensure DFS expands the smallest node_id last (since we pop from the end)
-        neighbors.reverse()
-        
+        neighbors.sort(key=lambda x: x[0])   # ascending id
+        neighbors.reverse()                  # push larger first so smaller pops first
+
         for neighbor_state, cost in neighbors:
-            if neighbor_state not in explored and not any(n.state == neighbor_state for n in frontier):
-                new_cost = node.path_cost + cost
-                if best_node and new_cost > best_node.path_cost:
-                    continue
+            if neighbor_state not in explored:
                 child = Node(
                     state=neighbor_state,
                     parent=node,
                     action=(node.state, neighbor_state),
-                    path_cost=new_cost
+                    path_cost=node.path_cost + cost
                 )
                 frontier.append(child)
                 node_count += 1
-        
-        _notify(
-            observer,
-            algorithm="dfs",
-            action="expand",
-            current=node.state,
-            frontier=[n.state for n in frontier],
-            explored=sorted(explored),
-            path=node.get_path(),
-            path_cost=node.path_cost,
-            nodes_created=node_count,
-        )
-    
-    if best_node:
-        _notify(
-            observer,
-            algorithm="dfs",
-            action="goal",
-            current=best_node.state,
-            frontier=[n.state for n in frontier],
-            explored=sorted(explored),
-            path=best_node.get_path(),
-            path_cost=best_node.path_cost,
-            nodes_created=node_count,
-        )
-        return solution(best_node, problem, node_count)
 
-    # No solution found
+        _notify(observer, algorithm="dfs", action="expand",
+                current=node.state,
+                frontier=[n.state for n in frontier],
+                explored=sorted(explored),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count)
+
     return None
 
-def bfs(problem, observer=None, stop_on_first_goal=False):
+
+def bfs(problem, observer=None, stop_on_first_goal=True):
     """
     Breadth-First Search algorithm.
     Expand all options one level at a time.
+    Stops at first goal found.
     """
     # Initialize the frontier with the origin node
     origin_node = Node(problem.origin)
@@ -189,34 +144,25 @@ def bfs(problem, observer=None, stop_on_first_goal=False):
     explored = set()
     # Keep track of the number of nodes created
     node_count = 1
-    # Track the best goal encountered
-    best_node = None
     
     while frontier:
         # Pop the first node (FIFO)
         node = frontier.popleft()
         
-        # Check if the node is a goal
+        # Check if the node is a goal - stop immediately
         if node.state in problem.destinations:
-            if stop_on_first_goal:
-                _notify(
-                    observer,
-                    algorithm="bfs",
-                    action="goal",
-                    current=node.state,
-                    frontier=[n.state for n in frontier],
-                    explored=sorted(explored),
-                    path=node.get_path(),
-                    path_cost=node.path_cost,
-                    nodes_created=node_count,
-                )
-                return solution(node, problem, node_count)
-            if _is_better_goal(node, best_node):
-                best_node = node
-            continue
-
-        if best_node and node.path_cost > best_node.path_cost:
-            continue
+            _notify(
+                observer,
+                algorithm="bfs",
+                action="goal",
+                current=node.state,
+                frontier=[n.state for n in frontier],
+                explored=sorted(explored),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count,
+            )
+            return solution(node, problem, node_count)
 
         if node.state in explored:
             continue
@@ -233,8 +179,6 @@ def bfs(problem, observer=None, stop_on_first_goal=False):
         for neighbor_state, cost in neighbors:
             if neighbor_state not in explored and not any(n.state == neighbor_state for n in frontier):
                 new_cost = node.path_cost + cost
-                if best_node and new_cost > best_node.path_cost:
-                    continue
                 child = Node(
                     state=neighbor_state,
                     parent=node,
@@ -256,20 +200,6 @@ def bfs(problem, observer=None, stop_on_first_goal=False):
             nodes_created=node_count,
         )
     
-    if best_node:
-        _notify(
-            observer,
-            algorithm="bfs",
-            action="goal",
-            current=best_node.state,
-            frontier=[n.state for n in frontier],
-            explored=sorted(explored),
-            path=best_node.get_path(),
-            path_cost=best_node.path_cost,
-            nodes_created=node_count,
-        )
-        return solution(best_node, problem, node_count)
-
     # No solution found
     return None
 
@@ -292,287 +222,162 @@ class PriorityNode(Node):
             return self.state < other.state
         return self.priority < other.priority
 
-def gbfs(problem, observer=None, stop_on_first_goal=False):
+def gbfs(problem, observer=None, stop_on_first_goal=True):
     """
-    Greedy Best-First Search algorithm.
-    Use only the heuristic cost to reach the goal from the current node to evaluate the node.
+    Greedy Best-First Search with [h, fifo] tie-breaking.
+    Expands lowest h first; if equal h, expands in discovery (FIFO) order.
+    Stops at first goal found.
     """
     def h(node_state):
-        """
-        Heuristic function: minimum Euclidean distance to any goal.
-        """
-        return min(problem.get_euclidean_distance(node_state, dest) for dest in problem.destinations)
-    
-    # Initialize the frontier with the origin node
-    origin_node = PriorityNode(
-        state=problem.origin,
-        priority=h(problem.origin)
-    )
-    
-    frontier = [(origin_node.priority, id(origin_node), origin_node)]
-    frontier_set = {problem.origin}  # Keep track of nodes in frontier for fast lookup
+        return min(problem.get_euclidean_distance(node_state, dest)
+                   for dest in problem.destinations)
+
+    origin_node = PriorityNode(problem.origin, priority=h(problem.origin))
+    frontier = [(h(problem.origin), 0, origin_node)]
     heapq.heapify(frontier)
-    
-    # Keep track of explored nodes to avoid cycles
-    explored = set()
-    # Keep track of the number of nodes created
-    node_count = 1
-    # Track the best goal encountered
+    explored, frontier_set = set(), {problem.origin}
+    node_count, fifo_counter = 1, 1
     best_node = None
-    
+
     while frontier:
-        # Pop the node with the lowest heuristic cost
         _, _, node = heapq.heappop(frontier)
         frontier_set.remove(node.state)
-        
-        # Check if the node is a goal
+
         if node.state in problem.destinations:
-            if stop_on_first_goal:
-                _notify(
-                    observer,
-                    algorithm="gbfs",
-                    action="goal",
-                    current=node.state,
-                    frontier=[n.state for _, _, n in frontier],
-                    explored=sorted(explored),
-                    path=node.get_path(),
-                    path_cost=node.path_cost,
-                    heuristic=h(node.state),
-                    nodes_created=node_count,
-                )
-                return solution(node, problem, node_count)
-            if _is_better_goal(node, best_node):
-                best_node = node
-            continue
+            _notify(
+                observer,
+                algorithm="gbfs",
+                action="goal",
+                current=node.state,
+                frontier=[n.state for _, __, n in frontier],
+                explored=sorted(explored),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count,
+            )
+            return solution(node, problem, node_count)
 
-        if best_node and node.path_cost > best_node.path_cost:
-            continue
-
-        if node.state in explored:
-            continue
-        
-        # Add the node to the explored set
         explored.add(node.state)
-        
-        # Get neighbors and add them to the frontier if not already explored
         neighbors = problem.get_neighbors(node.state)
-        
-        # Sort neighbors by node_id in ascending order to ensure deterministic expansion
         neighbors.sort(key=lambda x: x[0])
-        
+
         for neighbor_state, cost in neighbors:
             if neighbor_state not in explored and neighbor_state not in frontier_set:
-                new_cost = node.path_cost + cost
-                if best_node and new_cost > best_node.path_cost:
-                    continue
-                child = PriorityNode(
-                    state=neighbor_state,
-                    parent=node,
-                    action=(node.state, neighbor_state),
-                    path_cost=new_cost,
-                    priority=h(neighbor_state)
-                )
-                heapq.heappush(frontier, (child.priority, id(child), child))
+                child = PriorityNode(neighbor_state, node, (node.state, neighbor_state),
+                                     node.path_cost + cost, h(neighbor_state))
+                heapq.heappush(frontier, (child.priority, fifo_counter, child))
+                fifo_counter += 1
                 frontier_set.add(neighbor_state)
                 node_count += 1
-            elif neighbor_state in frontier_set:
-                # If the neighbor is already in the frontier, update its priority if the new priority is lower
-                for i, (_, _, existing_node) in enumerate(frontier):
-                    if existing_node.state == neighbor_state:
-                        new_cost = node.path_cost + cost
-                        if best_node and new_cost > best_node.path_cost:
-                            break
-                        new_priority = h(neighbor_state)
-                        if new_priority < existing_node.priority:
-                            # Replace the node with the new one with lower priority
-                            child = PriorityNode(
-                                state=neighbor_state,
-                                parent=node,
-                                action=(node.state, neighbor_state),
-                                path_cost=new_cost,
-                                priority=new_priority
-                            )
-                            frontier[i] = (new_priority, id(child), child)
-                            heapq.heapify(frontier)  # Re-heapify after modification
-                            node_count += 1
-                        break
-        
         _notify(
             observer,
             algorithm="gbfs",
             action="expand",
             current=node.state,
-            frontier=[n.state for _, _, n in frontier],
+            frontier=[n.state for _, __, n in frontier],
             explored=sorted(explored),
             path=node.get_path(),
             path_cost=node.path_cost,
-            heuristic=h(node.state),
             nodes_created=node_count,
         )
-    
-    if best_node:
-        _notify(
-            observer,
-            algorithm="gbfs",
-            action="goal",
-            current=best_node.state,
-            frontier=[n.state for _, _, n in frontier],
-            explored=sorted(explored),
-            path=best_node.get_path(),
-            path_cost=best_node.path_cost,
-            heuristic=h(best_node.state),
-            nodes_created=node_count,
-        )
-        return solution(best_node, problem, node_count)
-
-    # No solution found
     return None
 
-def astar(problem, observer=None, stop_on_first_goal=False):
+
+def astar(problem, observer=None, stop_on_first_goal=True):
     """
-    A* Search algorithm.
-    Use both the cost to reach the goal from the current node and the cost to reach this node to evaluate the node.
+    A* with tie-breaks: (1) smaller f = g + h, (2) smaller g, (3) FIFO.
+    Reopen-safe via best_g; skips stale pops. Deterministic neighbor order (f, g, id).
     """
-    def h(node_state):
-        """
-        Heuristic function: minimum Euclidean distance to any goal.
-        """
-        return min(problem.get_euclidean_distance(node_state, dest) for dest in problem.destinations)
-    
-    # Initialize the frontier with the origin node
-    origin_node = PriorityNode(
-        state=problem.origin,
-        priority=h(problem.origin)
-    )
-    
-    frontier = [(origin_node.priority, id(origin_node), origin_node)]
-    frontier_set = {problem.origin: 0}  # Keep track of nodes in frontier with their path costs
+
+    def h(state):
+        # min Euclidean distance to any destination
+        return min(problem.get_euclidean_distance(state, d) for d in problem.destinations)
+
+    # --- Init ---
+    h0 = h(problem.origin)
+    origin_node = PriorityNode(problem.origin, priority=h0)  # 'priority' kept for your Node API
+    frontier = [(h0, 0.0, 0, origin_node)]                  # (f, g, fifo, node)
     heapq.heapify(frontier)
-    
-    # Keep track of explored nodes to avoid cycles
-    explored = set()
-    # Keep track of the number of nodes created
+    fifo_counter = 1
+
+    best_g = {problem.origin: 0.0}                          # best known g for each state
+    explored = set()                                        # for reporting only
     node_count = 1
-    # Track the best goal encountered
-    best_node = None
-    
+
     while frontier:
-        if best_node and frontier and frontier[0][0] > best_node.path_cost:
-            break
-        # Pop the node with the lowest f-cost (g + h)
-        _, _, node = heapq.heappop(frontier)
-        frontier_set.pop(node.state, None)
-        
-        # Check if the node is a goal
-        if node.state in problem.destinations:
-            if stop_on_first_goal:
-                _notify(
-                    observer,
-                    algorithm="astar",
-                    action="goal",
-                    current=node.state,
-                    frontier=[n.state for _, _, n in frontier],
-                    explored=sorted(explored),
-                    path=node.get_path(),
-                    path_cost=node.path_cost,
-                    heuristic=h(node.state),
-                    f_cost=node.path_cost + h(node.state),
-                    nodes_created=node_count,
-                )
-                return solution(node, problem, node_count)
-            if _is_better_goal(node, best_node):
-                best_node = node
+        f_cur, g_cur, _, node = heapq.heappop(frontier)
+
+        # Skip stale entries (we've since found a cheaper path to this state)
+        if g_cur > best_g.get(node.state, float("inf")):
             continue
 
-        if best_node and node.path_cost > best_node.path_cost:
-            continue
-        
-        # Add the node to the explored set
         explored.add(node.state)
-        
-        # Get neighbors and add them to the frontier if not already explored
-        neighbors = problem.get_neighbors(node.state)
-        
-        # Sort neighbors by node_id in ascending order to ensure deterministic expansion
-        neighbors.sort(key=lambda x: x[0])
-        
-        for neighbor_state, cost in neighbors:
-            # Calculate the new path cost to this neighbor
-            new_cost = node.path_cost + cost
-            
-            if neighbor_state not in explored and neighbor_state not in frontier_set:
-                if best_node and new_cost > best_node.path_cost:
-                    continue
-                # Create a new node
+
+        # Goal check — with admissible h, first popped goal is optimal
+        if node.state in problem.destinations:
+            _notify(
+                observer,
+                algorithm="astar",
+                action="goal",
+                current=node.state,
+                frontier=[n.state for _, __, ___, n in frontier],
+                explored=sorted(explored),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count,
+            )
+            return solution(node, problem, node_count)
+
+        # Expand neighbors
+        expanded = []
+        for neighbor_state, step_cost in problem.get_neighbors(node.state):
+            new_g = g_cur + step_cost
+            # Standard f = g + h (no rounding)
+            h_val = h(neighbor_state)
+            f_new = new_g + h_val
+
+            # Only push if this improves best_g (this is the "reopen" logic)
+            if new_g < best_g.get(neighbor_state, float("inf")):
+                best_g[neighbor_state] = new_g
                 child = PriorityNode(
                     state=neighbor_state,
                     parent=node,
                     action=(node.state, neighbor_state),
-                    path_cost=new_cost,
-                    priority=new_cost + h(neighbor_state)
+                    path_cost=new_g,
+                    priority=f_new
                 )
-                heapq.heappush(frontier, (child.priority, id(child), child))
-                frontier_set[neighbor_state] = new_cost
+                expanded.append((f_new, new_g, neighbor_state, child))
                 node_count += 1
-            elif neighbor_state in frontier_set and new_cost < frontier_set[neighbor_state]:
-                if best_node and new_cost > best_node.path_cost:
-                    continue
-                # If the neighbor is already in the frontier, update its priority if the new path cost is lower
-                for i, (_, _, existing_node) in enumerate(frontier):
-                    if existing_node.state == neighbor_state:
-                        # Replace the node with the new one with lower priority
-                        child = PriorityNode(
-                            state=neighbor_state,
-                            parent=node,
-                            action=(node.state, neighbor_state),
-                            path_cost=new_cost,
-                            priority=new_cost + h(neighbor_state)
-                        )
-                        frontier[i] = (child.priority, id(child), child)
-                        heapq.heapify(frontier)  # Re-heapify after modification
-                        frontier_set[neighbor_state] = new_cost
-                        node_count += 1
-                        break
-        
+
+        # Deterministic insertion: (f, g, id) so equal-f prefers smaller g, then smaller id
+        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
+
+        for f_new, new_g, neighbor_state, child in expanded:
+            heapq.heappush(frontier, (f_new, new_g, fifo_counter, child))
+            fifo_counter += 1
+
         _notify(
             observer,
             algorithm="astar",
             action="expand",
             current=node.state,
-            frontier=[n.state for _, _, n in frontier],
+            frontier=[n.state for _, __, ___, n in frontier],
             explored=sorted(explored),
             path=node.get_path(),
             path_cost=node.path_cost,
-            heuristic=h(node.state),
-            f_cost=node.path_cost + h(node.state),
             nodes_created=node_count,
         )
-    
-    if best_node:
-        _notify(
-            observer,
-            algorithm="astar",
-            action="goal",
-            current=best_node.state,
-            frontier=[n.state for _, _, n in frontier],
-            explored=sorted(explored),
-            path=best_node.get_path(),
-            path_cost=best_node.path_cost,
-            heuristic=h(best_node.state),
-            f_cost=best_node.path_cost + h(best_node.state),
-            nodes_created=node_count,
-        )
-        return solution(best_node, problem, node_count)
 
-    # No solution found
+    # No solution
     return None
 
 # Custom Search Algorithms
 
-def cus1(problem, observer=None, stop_on_first_goal=False):
+def cus1(problem, observer=None, stop_on_first_goal=True):
     """
     Custom Search Strategy 1: Iterative Deepening Depth-First Search (IDDFS).
     An uninformed method to find a path to reach the goal.
+    Stops at first goal found.
     """
     # Implement IDDFS - starts with depth 0 and increases depth limit until a solution is found
     node_count = 1
@@ -584,31 +389,26 @@ def cus1(problem, observer=None, stop_on_first_goal=False):
         
         # Use a stack for DFS
         stack = [(Node(problem.origin), 0)]
-        best_node = None
         
         while stack:
             node, depth = stack.pop()
             
-            # Check if the node is a goal
+            # Check if the node is a goal - stop immediately
             if node.state in problem.destinations:
-                if stop_on_first_goal:
-                    _notify(
-                        observer,
-                        algorithm="cus1",
-                        action="goal",
-                        current=node.state,
-                        frontier=[n.state for n, _ in stack],
-                        explored=sorted(visited),
-                        path=node.get_path(),
-                        path_cost=node.path_cost,
-                        depth=depth,
-                        depth_limit=depth_limit,
-                        nodes_created=node_count,
-                    )
-                    return solution(node, problem, node_count)
-                if _is_better_goal(node, best_node):
-                    best_node = node
-                continue
+                _notify(
+                    observer,
+                    algorithm="cus1",
+                    action="goal",
+                    current=node.state,
+                    frontier=[n.state for n, _ in stack],
+                    explored=sorted(visited),
+                    path=node.get_path(),
+                    path_cost=node.path_cost,
+                    depth=depth,
+                    depth_limit=depth_limit,
+                    nodes_created=node_count,
+                )
+                return solution(node, problem, node_count)
             
             # Continue only if we haven't reached the depth limit
             if depth < depth_limit:
@@ -627,8 +427,6 @@ def cus1(problem, observer=None, stop_on_first_goal=False):
                 for neighbor_state, cost in neighbors:
                     if neighbor_state not in visited:
                         new_cost = node.path_cost + cost
-                        if best_node and new_cost > best_node.path_cost:
-                            continue
                         child = Node(
                             state=neighbor_state,
                             parent=node,
@@ -652,22 +450,6 @@ def cus1(problem, observer=None, stop_on_first_goal=False):
                     nodes_created=node_count,
                 )
 
-        if best_node:
-            _notify(
-                observer,
-                algorithm="cus1",
-                action="goal",
-                current=best_node.state,
-                frontier=[n.state for n, _ in stack],
-                explored=sorted(visited),
-                path=best_node.get_path(),
-                path_cost=best_node.path_cost,
-                depth=best_node.depth,
-                depth_limit=depth_limit,
-                nodes_created=node_count,
-            )
-            return solution(best_node, problem, node_count)
-        
         # Increase the depth limit for the next iteration
         depth_limit += 1
         
@@ -675,232 +457,310 @@ def cus1(problem, observer=None, stop_on_first_goal=False):
         if depth_limit > 1000:
             return None
 
-def cus2(problem, observer=None, stop_on_first_goal=False):
+def cus2(problem, observer=None):
     """
-    Custom Search Strategy 2: Bidirectional Search.
-    An informed method to find a shortest path (with least moves) to reach the goal.
-    """
-    # Check if there are multiple destinations
-    if len(problem.destinations) > 1:
-        # For multiple destinations, choose the one closest to origin as the target for bidirectional search
-        # This is a simplification, as true bidirectional search with multiple targets would be more complex
-        target = min(problem.destinations, 
-                    key=lambda dest: problem.get_euclidean_distance(problem.origin, dest))
-    else:
-        # For a single destination
-        target = problem.destinations[0]
-    
-    # Initialize forward search from origin
-    forward_frontier = deque([Node(problem.origin)])
-    forward_explored = {problem.origin: Node(problem.origin)}
-    
-    # Initialize backward search from target
-    backward_frontier = deque([Node(target)])
-    backward_explored = {target: Node(target)}
-    
-    # Keep track of the number of nodes created
-    node_count = 2  # One for origin, one for target
-    
-    # Keep track of the best intersection node and path cost
-    best_intersection = None
-    best_cost = float('inf')
-    
-    while forward_frontier and backward_frontier:
-        # Forward search step
-        if forward_frontier:
-            forward_node = forward_frontier.popleft()
-            
-            # Check if forward search has reached any node explored by backward search
-            if forward_node.state in backward_explored:
-                # Found an intersection
-                backward_node = backward_explored[forward_node.state]
-                total_cost = forward_node.path_cost + backward_node.path_cost
-                if stop_on_first_goal:
-                    # Build and return immediately
-                    forward_path = forward_node.get_path()
-                    backward_path = backward_node.get_path()
-                    backward_path.reverse()
-                    if backward_path:
-                        backward_path.pop(0)
-                    complete_path = forward_path + backward_path
-                    result_node = Node(target)
-                    result_node.path_cost = total_cost
-                    def custom_path():
-                        return " ".join(map(str, complete_path))
-                    result_node.get_path_string = custom_path
-                    _notify(
-                        observer,
-                        algorithm="cus2",
-                        action="goal",
-                        current=target,
-                        frontier_forward=[n.state for n in forward_frontier],
-                        frontier_backward=[n.state for n in backward_frontier],
-                        explored_forward=sorted(forward_explored.keys()),
-                        explored_backward=sorted(backward_explored.keys()),
-                        path=list(complete_path),
-                        path_cost=total_cost,
-                        nodes_created=node_count,
-                    )
-                    return solution(result_node, problem, node_count)
-                if total_cost < best_cost:
-                    best_intersection = (forward_node, backward_node)
-                    best_cost = total_cost
-            
-            # Expand forward node
-            neighbors = problem.get_neighbors(forward_node.state)
-            neighbors.sort(key=lambda x: x[0])  # Sort by node ID in ascending order
-            
-            for neighbor_state, cost in neighbors:
-                # Calculate new path cost
-                new_cost = forward_node.path_cost + cost
-                
-                if neighbor_state not in forward_explored or new_cost < forward_explored[neighbor_state].path_cost:
-                    # Create new node
-                    child = Node(
-                        state=neighbor_state,
-                        parent=forward_node,
-                        action=(forward_node.state, neighbor_state),
-                        path_cost=new_cost
-                    )
-                    forward_frontier.append(child)
-                    forward_explored[neighbor_state] = child
-                    node_count += 1
-            
-            _notify(
-                observer,
-                algorithm="cus2",
-                action="forward_expand",
-                current=forward_node.state,
-                frontier_forward=[n.state for n in forward_frontier],
-                frontier_backward=[n.state for n in backward_frontier],
-                explored_forward=sorted(forward_explored.keys()),
-                explored_backward=sorted(backward_explored.keys()),
-                path=forward_node.get_path(),
-                path_cost=forward_node.path_cost,
-                nodes_created=node_count,
-            )
-        
-        # Backward search step
-        if backward_frontier:
-            backward_node = backward_frontier.popleft()
-            
-            # Check if backward search has reached any node explored by forward search
-            if backward_node.state in forward_explored:
-                # Found an intersection
-                forward_node = forward_explored[backward_node.state]
-                total_cost = forward_node.path_cost + backward_node.path_cost
-                if stop_on_first_goal:
-                    forward_path = forward_node.get_path()
-                    backward_path = backward_node.get_path()
-                    backward_path.reverse()
-                    if backward_path:
-                        backward_path.pop(0)
-                    complete_path = forward_path + backward_path
-                    result_node = Node(target)
-                    result_node.path_cost = total_cost
-                    def custom_path():
-                        return " ".join(map(str, complete_path))
-                    result_node.get_path_string = custom_path
-                    _notify(
-                        observer,
-                        algorithm="cus2",
-                        action="goal",
-                        current=target,
-                        frontier_forward=[n.state for n in forward_frontier],
-                        frontier_backward=[n.state for n in backward_frontier],
-                        explored_forward=sorted(forward_explored.keys()),
-                        explored_backward=sorted(backward_explored.keys()),
-                        path=list(complete_path),
-                        path_cost=total_cost,
-                        nodes_created=node_count,
-                    )
-                    return solution(result_node, problem, node_count)
-                if total_cost < best_cost:
-                    best_intersection = (forward_node, backward_node)
-                    best_cost = total_cost
-            
-            # Find all nodes that have edges TO this node (reverse neighbors)
-            # This is more complex because we need to search all edges
-            reverse_neighbors = []
-            for (from_node, to_node), edge_cost in problem.edges.items():
-                if to_node == backward_node.state:
-                    reverse_neighbors.append((from_node, edge_cost))
-            
-            reverse_neighbors.sort(key=lambda x: x[0])  # Sort by node ID in ascending order
-            
-            for neighbor_state, cost in reverse_neighbors:
-                # Calculate new path cost
-                new_cost = backward_node.path_cost + cost
-                
-                if neighbor_state not in backward_explored or new_cost < backward_explored[neighbor_state].path_cost:
-                    # Create new node
-                    child = Node(
-                        state=neighbor_state,
-                        parent=backward_node,
-                        action=(neighbor_state, backward_node.state),  # Note the reversed action
-                        path_cost=new_cost
-                    )
-                    backward_frontier.append(child)
-                    backward_explored[neighbor_state] = child
-                    node_count += 1
-            
-            _notify(
-                observer,
-                algorithm="cus2",
-                action="backward_expand",
-                current=backward_node.state,
-                frontier_forward=[n.state for n in forward_frontier],
-                frontier_backward=[n.state for n in backward_frontier],
-                explored_forward=sorted(forward_explored.keys()),
-                explored_backward=sorted(backward_explored.keys()),
-                path=backward_node.get_path(),
-                path_cost=backward_node.path_cost,
-                nodes_created=node_count,
-            )
-    
-    # Check if an intersection was found
-    if best_intersection:
-        forward_node, backward_node = best_intersection
-        
-        # Construct complete path
-        # First, get the path from origin to intersection
-        forward_path = forward_node.get_path()
-        
-        # Then, get the path from target to intersection (reversed)
-        backward_path = backward_node.get_path()
-        backward_path.reverse()
-        
-        # Remove duplicate intersection node
-        backward_path.pop(0)
-        
-        # Combine paths
-        complete_path = forward_path + backward_path
-        
-        # Create a new node with the complete path
-        result_node = Node(target)
-        result_node.path_cost = best_cost
-        
-        # Override the get_path method to return our complete path
-        def custom_path():
-            return " ".join(map(str, complete_path))
-        
-        result_node.get_path_string = custom_path
-        
-        _notify(
-            observer,
-            algorithm="cus2",
-            action="goal",
-            current=target,
-            frontier_forward=[n.state for n in forward_frontier],
-            frontier_backward=[n.state for n in backward_frontier],
-            explored_forward=sorted(forward_explored.keys()),
-            explored_backward=sorted(backward_explored.keys()),
-            path=list(complete_path),
-            path_cost=best_cost,
-            nodes_created=node_count,
-        )
+    CUS2 — Custom Bidirectional A* Search
 
-        return solution(result_node, problem, node_count)
-    
-    # No solution found
-    return None
+    Searches forward from origin and backward from all goals simultaneously.
+    Tie-breaks on both sides: (1) smaller f, (2) smaller g, (3) FIFO.
+    Reopen-safe via best_g_f / best_g_b; skips stale pops.
+
+    Assumptions / fallbacks for reverse expansion:
+      - If problem.get_predecessors(state) exists, uses it for the backward side.
+      - Else if problem.edges exists (dict or iterable of (u,v)->cost / (u,v,c)), builds reverse adjacency once.
+      - Else assumes the graph is undirected and reuses get_neighbors for backward side.
+
+    Returns:
+        solution(node, problem, node_count)
+        or None if no path exists.
+    """
+
+    # -------------------------------
+    # Heuristics for both directions
+    # -------------------------------
+    def h_forward(s):
+        # min Euclidean distance to any destination
+        return min(problem.get_euclidean_distance(s, d) for d in problem.destinations)
+
+    def h_backward(s):
+        # estimated cost from s to origin (used by backward search)
+        return problem.get_euclidean_distance(s, problem.origin)
+
+    # -----------------------------------------
+    # Build reverse neighbor accessor (once)
+    # -----------------------------------------
+    get_pred = getattr(problem, "get_predecessors", None)
+    reverse_adj = None
+
+    def backward_neighbors(u):
+        """Yield (pred, cost) for edges pred -> u."""
+        if callable(get_pred):
+            return get_pred(u)
+
+        nonlocal reverse_adj
+        if reverse_adj is None:
+            edges = getattr(problem, "edges", None)
+            rev = {}
+            if isinstance(edges, dict):
+                for (a, b), w in edges.items():
+                    rev.setdefault(b, []).append((a, w))
+                reverse_adj = rev
+            elif edges is not None:
+                try:
+                    for e in edges:
+                        if len(e) == 3:
+                            a, b, w = e
+                            rev.setdefault(b, []).append((a, w))
+                    reverse_adj = rev
+                except Exception:
+                    reverse_adj = {}
+            else:
+                reverse_adj = {}
+
+        if reverse_adj:
+            return reverse_adj.get(u, [])
+        return [(v, w) for (v, w) in problem.get_neighbors(u)]
+
+    # ------------------------------------------------
+    # Frontier entries are (f, g, fifo, PriorityNode)
+    # ------------------------------------------------
+    fifo_f = 0
+    fifo_b = 0
+
+    # --- forward init (from origin) ---
+    g0 = 0.0
+    h0 = h_forward(problem.origin)
+    start_node = PriorityNode(problem.origin, priority=g0 + h0)
+    front_f = [(g0 + h0, g0, fifo_f, start_node)]
+    heapq.heapify(front_f)
+    fifo_f += 1
+
+    best_g_f = {problem.origin: g0}
+    nodes_f = {problem.origin: start_node}
+    explored_f = set()
+
+    # --- backward init (from all goals) ---
+    front_b = []
+    best_g_b = {}
+    nodes_b = {}
+    explored_b = set()
+
+    for goal in problem.destinations:
+        g_back = 0.0
+        hb = h_backward(goal)
+        node_b = PriorityNode(goal, priority=g_back + hb)
+        heapq.heappush(front_b, (g_back + hb, g_back, fifo_b, node_b))
+        fifo_b += 1
+        best_g_b[goal] = 0.0
+        nodes_b[goal] = node_b
+
+    node_count = 1 + len(problem.destinations)
+
+    # ---------------------------------
+    # Best meeting found so far
+    # ---------------------------------
+    best_total = inf
+    meet_state = None
+    meet_f_node = None
+    meet_b_node = None
+
+    # Helpers
+    def push_children_forward(from_node, g_cur):
+        expanded = []
+        for v, w in problem.get_neighbors(from_node.state):
+            new_g = g_cur + w
+            if new_g < best_g_f.get(v, inf):
+                hv = h_forward(v)
+                fv = new_g + hv
+                child = PriorityNode(
+                    state=v,
+                    parent=from_node,
+                    action=(from_node.state, v),
+                    path_cost=new_g,
+                    priority=fv
+                )
+                expanded.append((fv, new_g, v, child))
+        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
+        return expanded
+
+    def push_children_backward(from_node, g_cur):
+        expanded = []
+        for p, w in backward_neighbors(from_node.state):
+            new_g = g_cur + w
+            if new_g < best_g_b.get(p, inf):
+                hp = h_backward(p)
+                fp = new_g + hp
+                child = PriorityNode(
+                    state=p,
+                    parent=from_node,
+                    action=(p, from_node.state),
+                    path_cost=new_g,
+                    priority=fp
+                )
+                expanded.append((fp, new_g, p, child))
+        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
+        return expanded
+
+    def try_update_best_meeting(s):
+        nonlocal best_total, meet_state, meet_f_node, meet_b_node
+        if s in best_g_f and s in best_g_b:
+            cand = best_g_f[s] + best_g_b[s]
+            if cand < best_total:
+                best_total = cand
+                meet_state = s
+                meet_f_node = nodes_f[s]
+                meet_b_node = nodes_b[s]
+
+    def top_f(front):
+        return front[0][0] if front else inf
+
+    # -------------------------------
+    # Main loop
+    # -------------------------------
+    while front_f or front_b:
+        if best_total <= (top_f(front_f) + top_f(front_b)):
+            break
+
+        expand_forward = top_f(front_f) <= top_f(front_b)
+
+        if expand_forward:
+            if not front_f:
+                break
+            f_cur, g_cur, _, node = heapq.heappop(front_f)
+            if g_cur > best_g_f.get(node.state, inf):
+                continue
+
+            explored_f.add(node.state)
+            try_update_best_meeting(node.state)
+
+            for fv, new_g, v, child in push_children_forward(node, g_cur):
+                if new_g < best_g_f.get(v, inf):
+                    best_g_f[v] = new_g
+                    nodes_f[v] = child
+                    heapq.heappush(front_f, (fv, new_g, fifo_f, child))
+                    fifo_f += 1
+                    node_count += 1
+
+            _notify(
+                observer,
+                algorithm="cus2",
+                action="expand_f",
+                current=node.state,
+                frontier=[n.state for _, __, ___, n in front_f],
+                explored=sorted(explored_f),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count,
+            )
+
+        else:
+            if not front_b:
+                break
+            f_cur, g_cur, _, node = heapq.heappop(front_b)
+            if g_cur > best_g_b.get(node.state, inf):
+                continue
+
+            explored_b.add(node.state)
+            try_update_best_meeting(node.state)
+
+            for fbv, new_g, p, child in push_children_backward(node, g_cur):
+                if new_g < best_g_b.get(p, inf):
+                    best_g_b[p] = new_g
+                    nodes_b[p] = child
+                    heapq.heappush(front_b, (fbv, new_g, fifo_b, child))
+                    fifo_b += 1
+                    node_count += 1
+
+            _notify(
+                observer,
+                algorithm="cus2",
+                action="expand_b",
+                current=node.state,
+                frontier=[n.state for _, __, ___, n in front_b],
+                explored=sorted(explored_b),
+                path=node.get_path(),
+                path_cost=node.path_cost,
+                nodes_created=node_count,
+            )
+
+    if not (meet_state and best_total < inf):
+        return None
+
+    # ----------------------------------------
+    # Reconstruct path (forward + backward)
+    # ----------------------------------------
+    f_chain = []
+    n = meet_f_node
+    while n is not None:
+        f_chain.append(n)
+        n = n.parent
+    f_chain.reverse()
+
+    b_chain_states = []
+    b_node = meet_b_node
+    first = True
+    while b_node is not None:
+        if not first:
+            b_chain_states.append(b_node.state)
+        first = False
+        b_node = b_node.parent
+
+    stitched_head = PriorityNode(f_chain[0].state, priority=0.0)
+    stitched_head.path_cost = 0.0
+    cur = stitched_head
+
+    for nxt in f_chain[1:]:
+        step_cost = next(w for (v, w) in problem.get_neighbors(cur.state) if v == nxt.state)
+        child = PriorityNode(
+            state=nxt.state,
+            parent=cur,
+            action=(cur.state, nxt.state),
+            path_cost=cur.path_cost + step_cost,
+            priority=0.0
+        )
+        cur = child
+
+    for nxt_state in b_chain_states:
+        step = None
+        for (v, w) in problem.get_neighbors(cur.state):
+            if v == nxt_state:
+                step = w
+                break
+        if step is None:
+            preds = list(backward_neighbors(cur.state))
+            for (p, w) in preds:
+                if p == nxt_state:
+                    step = w
+                    break
+        if step is None:
+            return {
+                "path": [n.state for n in f_chain] + b_chain_states,
+                "path_cost": best_total,
+                "nodes_created": node_count,
+                "meeting": meet_state,
+            }
+
+        child = PriorityNode(
+            state=nxt_state,
+            parent=cur,
+            action=(cur.state, nxt_state),
+            path_cost=cur.path_cost + step,
+            priority=0.0
+        )
+        cur = child
+
+    goal_node = cur
+
+    _notify(
+        observer,
+        algorithm="cus2",
+        action="goal",
+        current=goal_node.state,
+        frontier=[n.state for _, __, ___, n in (front_f + front_b)],
+        explored=sorted(explored_f | explored_b),
+        path=goal_node.get_path(),
+        path_cost=goal_node.path_cost,
+        nodes_created=node_count,
+    )
+
+    return solution(goal_node, problem, node_count)
