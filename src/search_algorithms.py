@@ -79,14 +79,19 @@ def _is_better_goal(candidate, current_best):
 # Uninformed Search Algorithms
 
 def dfs(problem, observer=None, stop_on_first_goal=True):
+    """
+    DFS with tie-breaking: (1) depth (implicit in LIFO), (2) chronological order, (3) node ID.
+    Uses list with tuples (fifo_counter, node_id, node) to ensure proper ordering.
+    """
     origin_node = Node(problem.origin)
-    frontier = [origin_node]
+    frontier = [(0, problem.origin, origin_node)]  # (fifo, node_id, node)
+    fifo_counter = 1
 
     explored = set()
     node_count = 1
 
     while frontier:
-        node = frontier.pop()
+        _, _, node = frontier.pop()  # LIFO (last in, first out)
 
         # skip if already expanded
         if node.state in explored:
@@ -96,7 +101,7 @@ def dfs(problem, observer=None, stop_on_first_goal=True):
         if node.state in problem.destinations:
             _notify(observer, algorithm="dfs", action="goal",
                     current=node.state,
-                    frontier=[n.state for n in frontier],
+                    frontier=[n.state for _, __, n in frontier],
                     explored=sorted(explored),
                     path=node.get_path(),
                     path_cost=node.path_cost,
@@ -106,9 +111,11 @@ def dfs(problem, observer=None, stop_on_first_goal=True):
         explored.add(node.state)
 
         neighbors = problem.get_neighbors(node.state)
-        neighbors.sort(key=lambda x: x[0])   # ascending id
-        neighbors.reverse()                  # push larger first so smaller pops first
-
+        # Sort by node_id ascending for deterministic order
+        neighbors.sort(key=lambda x: x[0])
+        
+        # Collect children with (fifo, node_id, node) tuples
+        children = []
         for neighbor_state, cost in neighbors:
             if neighbor_state not in explored:
                 child = Node(
@@ -117,12 +124,18 @@ def dfs(problem, observer=None, stop_on_first_goal=True):
                     action=(node.state, neighbor_state),
                     path_cost=node.path_cost + cost
                 )
-                frontier.append(child)
+                children.append((fifo_counter, neighbor_state, child))
+                fifo_counter += 1
                 node_count += 1
+        
+        # Reverse order for LIFO: push higher IDs first so lower IDs pop first
+        # When tie on chronological, lower node_id wins
+        children.sort(key=lambda x: (-x[0], -x[1]))
+        frontier.extend(children)
 
         _notify(observer, algorithm="dfs", action="expand",
                 current=node.state,
-                frontier=[n.state for n in frontier],
+                frontier=[n.state for _, __, n in frontier],
                 explored=sorted(explored),
                 path=node.get_path(),
                 path_cost=node.path_cost,
@@ -133,30 +146,36 @@ def dfs(problem, observer=None, stop_on_first_goal=True):
 
 def bfs(problem, observer=None, stop_on_first_goal=True):
     """
-    Breadth-First Search algorithm.
-    Expand all options one level at a time.
-    Stops at first goal found.
+    Breadth-First Search with tie-breaking: (1) depth (implicit in FIFO), (2) chronological order, (3) node ID.
+    Uses deque with tuples (fifo_counter, node_id, node) to ensure proper ordering.
     """
-    # Initialize the frontier with the origin node
     origin_node = Node(problem.origin)
-    frontier = deque([origin_node])
-    # Keep track of explored nodes to avoid cycles
+    frontier = deque([(0, problem.origin, origin_node)])  # (fifo, node_id, node)
+    frontier_set = {problem.origin}
+    fifo_counter = 1
+    
     explored = set()
-    # Keep track of the number of nodes created
     node_count = 1
     
     while frontier:
-        # Pop the first node (FIFO)
-        node = frontier.popleft()
+        # Sort current frontier by (fifo, node_id) to get the earliest with lowest ID
+        frontier_list = list(frontier)
+        frontier_list.sort(key=lambda x: (x[0], x[1]))
         
-        # Check if the node is a goal - stop immediately
+        # Find and remove the best item
+        best_item = frontier_list[0]
+        frontier.remove(best_item)
+        _, _, node = best_item
+        frontier_set.discard(node.state)
+        
+        # Check if the node is a goal
         if node.state in problem.destinations:
             _notify(
                 observer,
                 algorithm="bfs",
                 action="goal",
                 current=node.state,
-                frontier=[n.state for n in frontier],
+                frontier=[n.state for _, __, n in frontier],
                 explored=sorted(explored),
                 path=node.get_path(),
                 path_cost=node.path_cost,
@@ -167,25 +186,22 @@ def bfs(problem, observer=None, stop_on_first_goal=True):
         if node.state in explored:
             continue
         
-        # Add the node to the explored set
         explored.add(node.state)
         
-        # Get neighbors and add them to the frontier if not already explored
         neighbors = problem.get_neighbors(node.state)
-        
-        # Sort neighbors by node_id in ascending order
-        neighbors.sort(key=lambda x: x[0])
+        neighbors.sort(key=lambda x: x[0])  # Sort by node ID
         
         for neighbor_state, cost in neighbors:
-            if neighbor_state not in explored and not any(n.state == neighbor_state for n in frontier):
-                new_cost = node.path_cost + cost
+            if neighbor_state not in explored and neighbor_state not in frontier_set:
                 child = Node(
                     state=neighbor_state,
                     parent=node,
                     action=(node.state, neighbor_state),
-                    path_cost=new_cost
+                    path_cost=node.path_cost + cost
                 )
-                frontier.append(child)
+                frontier.append((fifo_counter, neighbor_state, child))
+                frontier_set.add(neighbor_state)
+                fifo_counter += 1
                 node_count += 1
         
         _notify(
@@ -193,14 +209,13 @@ def bfs(problem, observer=None, stop_on_first_goal=True):
             algorithm="bfs",
             action="expand",
             current=node.state,
-            frontier=[n.state for n in frontier],
+            frontier=[n.state for _, __, n in frontier],
             explored=sorted(explored),
             path=node.get_path(),
             path_cost=node.path_cost,
             nodes_created=node_count,
         )
     
-    # No solution found
     return None
 
 # Informed Search Algorithms
@@ -224,23 +239,20 @@ class PriorityNode(Node):
 
 def gbfs(problem, observer=None, stop_on_first_goal=True):
     """
-    Greedy Best-First Search with [h, fifo] tie-breaking.
-    Expands lowest h first; if equal h, expands in discovery (FIFO) order.
-    Stops at first goal found.
+    Greedy Best-First Search with tie-breaking: (1) h-value, (2) chronological order (FIFO), (3) node ID.
     """
     def h(node_state):
         return min(problem.get_euclidean_distance(node_state, dest)
                    for dest in problem.destinations)
 
     origin_node = PriorityNode(problem.origin, priority=h(problem.origin))
-    frontier = [(h(problem.origin), 0, origin_node)]
+    frontier = [(h(problem.origin), 0, problem.origin, origin_node)]  # (h, fifo, node_id, node)
     heapq.heapify(frontier)
     explored, frontier_set = set(), {problem.origin}
     node_count, fifo_counter = 1, 1
-    best_node = None
 
     while frontier:
-        _, _, node = heapq.heappop(frontier)
+        _, _, _, node = heapq.heappop(frontier)
         frontier_set.remove(node.state)
 
         if node.state in problem.destinations:
@@ -249,7 +261,7 @@ def gbfs(problem, observer=None, stop_on_first_goal=True):
                 algorithm="gbfs",
                 action="goal",
                 current=node.state,
-                frontier=[n.state for _, __, n in frontier],
+                frontier=[n.state for _, __, ___, n in frontier],
                 explored=sorted(explored),
                 path=node.get_path(),
                 path_cost=node.path_cost,
@@ -263,18 +275,20 @@ def gbfs(problem, observer=None, stop_on_first_goal=True):
 
         for neighbor_state, cost in neighbors:
             if neighbor_state not in explored and neighbor_state not in frontier_set:
+                h_val = h(neighbor_state)
                 child = PriorityNode(neighbor_state, node, (node.state, neighbor_state),
-                                     node.path_cost + cost, h(neighbor_state))
-                heapq.heappush(frontier, (child.priority, fifo_counter, child))
+                                     node.path_cost + cost, h_val)
+                heapq.heappush(frontier, (h_val, fifo_counter, neighbor_state, child))
                 fifo_counter += 1
                 frontier_set.add(neighbor_state)
                 node_count += 1
+                
         _notify(
             observer,
             algorithm="gbfs",
             action="expand",
             current=node.state,
-            frontier=[n.state for _, __, n in frontier],
+            frontier=[n.state for _, __, ___, n in frontier],
             explored=sorted(explored),
             path=node.get_path(),
             path_cost=node.path_cost,
@@ -285,35 +299,34 @@ def gbfs(problem, observer=None, stop_on_first_goal=True):
 
 def astar(problem, observer=None, stop_on_first_goal=True):
     """
-    A* with tie-breaks: (1) smaller f = g + h, (2) smaller g, (3) FIFO.
-    Reopen-safe via best_g; skips stale pops. Deterministic neighbor order (f, g, id).
+    A* with tie-breaking: (1) f-value (g + h), (2) chronological order (FIFO), (3) node ID.
+    Reopen-safe via best_g; skips stale pops.
     """
 
     def h(state):
-        # min Euclidean distance to any destination
         return min(problem.get_euclidean_distance(state, d) for d in problem.destinations)
 
-    # --- Init ---
     h0 = h(problem.origin)
-    origin_node = PriorityNode(problem.origin, priority=h0)  # 'priority' kept for your Node API
-    frontier = [(h0, 0.0, 0, origin_node)]                  # (f, g, fifo, node)
+    origin_node = PriorityNode(problem.origin, priority=h0)
+    frontier = [(h0, 0, problem.origin, origin_node)]  # (f, fifo, node_id, node)
     heapq.heapify(frontier)
     fifo_counter = 1
 
-    best_g = {problem.origin: 0.0}                          # best known g for each state
-    explored = set()                                        # for reporting only
+    best_g = {problem.origin: 0.0}
+    explored = set()
     node_count = 1
 
     while frontier:
-        f_cur, g_cur, _, node = heapq.heappop(frontier)
+        f_cur, _, _, node = heapq.heappop(frontier)
+        g_cur = node.path_cost
 
-        # Skip stale entries (we've since found a cheaper path to this state)
+        # Skip stale entries
         if g_cur > best_g.get(node.state, float("inf")):
             continue
 
         explored.add(node.state)
 
-        # Goal check — with admissible h, first popped goal is optimal
+        # Goal check
         if node.state in problem.destinations:
             _notify(
                 observer,
@@ -329,14 +342,15 @@ def astar(problem, observer=None, stop_on_first_goal=True):
             return solution(node, problem, node_count)
 
         # Expand neighbors
-        expanded = []
-        for neighbor_state, step_cost in problem.get_neighbors(node.state):
+        neighbors = problem.get_neighbors(node.state)
+        neighbors.sort(key=lambda x: x[0])  # Sort by node ID
+        
+        for neighbor_state, step_cost in neighbors:
             new_g = g_cur + step_cost
-            # Standard f = g + h (no rounding)
             h_val = h(neighbor_state)
             f_new = new_g + h_val
 
-            # Only push if this improves best_g (this is the "reopen" logic)
+            # Only push if this improves best_g
             if new_g < best_g.get(neighbor_state, float("inf")):
                 best_g[neighbor_state] = new_g
                 child = PriorityNode(
@@ -346,15 +360,9 @@ def astar(problem, observer=None, stop_on_first_goal=True):
                     path_cost=new_g,
                     priority=f_new
                 )
-                expanded.append((f_new, new_g, neighbor_state, child))
+                heapq.heappush(frontier, (f_new, fifo_counter, neighbor_state, child))
+                fifo_counter += 1
                 node_count += 1
-
-        # Deterministic insertion: (f, g, id) so equal-f prefers smaller g, then smaller id
-        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
-
-        for f_new, new_g, neighbor_state, child in expanded:
-            heapq.heappush(frontier, (f_new, new_g, fifo_counter, child))
-            fifo_counter += 1
 
         _notify(
             observer,
@@ -368,39 +376,35 @@ def astar(problem, observer=None, stop_on_first_goal=True):
             nodes_created=node_count,
         )
 
-    # No solution
     return None
 
 # Custom Search Algorithms
 
 def cus1(problem, observer=None, stop_on_first_goal=True):
     """
-    Custom Search Strategy 1: Iterative Deepening Depth-First Search (IDDFS).
-    An uninformed method to find a path to reach the goal.
-    Stops at first goal found.
+    Custom Search Strategy 1: Iterative Deepening DFS (IDDFS).
+    Tie-breaking: (1) depth limit (implicit), (2) chronological order, (3) node ID.
     """
-    # Implement IDDFS - starts with depth 0 and increases depth limit until a solution is found
     node_count = 1
     depth_limit = 0
     
     while True:
-        # Track visited nodes for this depth limit
         visited = set()
-        
-        # Use a stack for DFS
-        stack = [(Node(problem.origin), 0)]
+        stack = [(0, problem.origin, Node(problem.origin), 0)]  # (fifo, node_id, node, depth)
+        fifo_counter = 1
         
         while stack:
-            node, depth = stack.pop()
+            # Sort by (depth, fifo, node_id) and pop last (LIFO)
+            stack.sort(key=lambda x: (x[3], x[0], x[1]))
+            _, _, node, depth = stack.pop()
             
-            # Check if the node is a goal - stop immediately
             if node.state in problem.destinations:
                 _notify(
                     observer,
                     algorithm="cus1",
                     action="goal",
                     current=node.state,
-                    frontier=[n.state for n, _ in stack],
+                    frontier=[n.state for _, __, n, ___ in stack],
                     explored=sorted(visited),
                     path=node.get_path(),
                     path_cost=node.path_cost,
@@ -410,38 +414,36 @@ def cus1(problem, observer=None, stop_on_first_goal=True):
                 )
                 return solution(node, problem, node_count)
             
-            # Continue only if we haven't reached the depth limit
             if depth < depth_limit:
-                # Mark the node as visited
                 visited.add(node.state)
                 
-                # Get neighbors
                 neighbors = problem.get_neighbors(node.state)
-                
-                # Sort neighbors by node_id in ascending order
                 neighbors.sort(key=lambda x: x[0])
                 
-                # Reverse the order to ensure DFS expands the smallest node_id last (since we pop from the end)
-                neighbors.reverse()
-                
+                # Collect children
+                children = []
                 for neighbor_state, cost in neighbors:
                     if neighbor_state not in visited:
-                        new_cost = node.path_cost + cost
                         child = Node(
                             state=neighbor_state,
                             parent=node,
                             action=(node.state, neighbor_state),
-                            path_cost=new_cost
+                            path_cost=node.path_cost + cost
                         )
-                        stack.append((child, depth + 1))
+                        children.append((fifo_counter, neighbor_state, child, depth + 1))
+                        fifo_counter += 1
                         node_count += 1
+                
+                # Reverse for LIFO: higher fifo and node_id pushed first
+                children.sort(key=lambda x: (-x[0], -x[1]))
+                stack.extend(children)
                 
                 _notify(
                     observer,
                     algorithm="cus1",
                     action="expand",
                     current=node.state,
-                    frontier=[n.state for n, _ in stack],
+                    frontier=[n.state for _, __, n, ___ in stack],
                     explored=sorted(visited),
                     path=node.get_path(),
                     path_cost=node.path_cost,
@@ -450,10 +452,8 @@ def cus1(problem, observer=None, stop_on_first_goal=True):
                     nodes_created=node_count,
                 )
 
-        # Increase the depth limit for the next iteration
         depth_limit += 1
         
-        # If the depth limit gets too large, we might be in an infinite loop
         if depth_limit > 1000:
             return None
 
@@ -462,7 +462,7 @@ def cus2(problem, observer=None):
     CUS2 — Custom Bidirectional A* Search
 
     Searches forward from origin and backward from all goals simultaneously.
-    Tie-breaks on both sides: (1) smaller f, (2) smaller g, (3) FIFO.
+    Tie-breaking: (1) f-value, (2) chronological order (FIFO), (3) node ID (ascending).
     Reopen-safe via best_g_f / best_g_b; skips stale pops.
 
     Assumptions / fallbacks for reverse expansion:
@@ -521,9 +521,10 @@ def cus2(problem, observer=None):
             return reverse_adj.get(u, [])
         return [(v, w) for (v, w) in problem.get_neighbors(u)]
 
-    # ------------------------------------------------
-    # Frontier entries are (f, g, fifo, PriorityNode)
-    # ------------------------------------------------
+    # -----------------------------------------------------------
+    # Frontier entries are (f, fifo, node_id, PriorityNode)
+    # Tie-breaking: (1) f-value, (2) chronological order, (3) node ID
+    # -----------------------------------------------------------
     fifo_f = 0
     fifo_b = 0
 
@@ -531,7 +532,7 @@ def cus2(problem, observer=None):
     g0 = 0.0
     h0 = h_forward(problem.origin)
     start_node = PriorityNode(problem.origin, priority=g0 + h0)
-    front_f = [(g0 + h0, g0, fifo_f, start_node)]
+    front_f = [(g0 + h0, fifo_f, problem.origin, start_node)]
     heapq.heapify(front_f)
     fifo_f += 1
 
@@ -549,7 +550,7 @@ def cus2(problem, observer=None):
         g_back = 0.0
         hb = h_backward(goal)
         node_b = PriorityNode(goal, priority=g_back + hb)
-        heapq.heappush(front_b, (g_back + hb, g_back, fifo_b, node_b))
+        heapq.heappush(front_b, (g_back + hb, fifo_b, goal, node_b))
         fifo_b += 1
         best_g_b[goal] = 0.0
         nodes_b[goal] = node_b
@@ -579,8 +580,8 @@ def cus2(problem, observer=None):
                     path_cost=new_g,
                     priority=fv
                 )
-                expanded.append((fv, new_g, v, child))
-        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
+                expanded.append((fv, v, child))
+        expanded.sort(key=lambda x: (x[0], x[1]))
         return expanded
 
     def push_children_backward(from_node, g_cur):
@@ -597,8 +598,8 @@ def cus2(problem, observer=None):
                     path_cost=new_g,
                     priority=fp
                 )
-                expanded.append((fp, new_g, p, child))
-        expanded.sort(key=lambda x: (x[0], x[1], x[2]))
+                expanded.append((fp, p, child))
+        expanded.sort(key=lambda x: (x[0], x[1]))
         return expanded
 
     def try_update_best_meeting(s):
@@ -626,18 +627,19 @@ def cus2(problem, observer=None):
         if expand_forward:
             if not front_f:
                 break
-            f_cur, g_cur, _, node = heapq.heappop(front_f)
-            if g_cur > best_g_f.get(node.state, inf):
+            f_cur, _, node_id, node = heapq.heappop(front_f)
+            g_cur = best_g_f.get(node.state, inf)
+            if g_cur == inf:
                 continue
 
             explored_f.add(node.state)
             try_update_best_meeting(node.state)
 
-            for fv, new_g, v, child in push_children_forward(node, g_cur):
-                if new_g < best_g_f.get(v, inf):
-                    best_g_f[v] = new_g
+            for fv, v, child in push_children_forward(node, g_cur):
+                if child.path_cost < best_g_f.get(v, inf):
+                    best_g_f[v] = child.path_cost
                     nodes_f[v] = child
-                    heapq.heappush(front_f, (fv, new_g, fifo_f, child))
+                    heapq.heappush(front_f, (fv, fifo_f, v, child))
                     fifo_f += 1
                     node_count += 1
 
@@ -656,18 +658,19 @@ def cus2(problem, observer=None):
         else:
             if not front_b:
                 break
-            f_cur, g_cur, _, node = heapq.heappop(front_b)
-            if g_cur > best_g_b.get(node.state, inf):
+            f_cur, _, node_id, node = heapq.heappop(front_b)
+            g_cur = best_g_b.get(node.state, inf)
+            if g_cur == inf:
                 continue
 
             explored_b.add(node.state)
             try_update_best_meeting(node.state)
 
-            for fbv, new_g, p, child in push_children_backward(node, g_cur):
-                if new_g < best_g_b.get(p, inf):
-                    best_g_b[p] = new_g
+            for fbv, p, child in push_children_backward(node, g_cur):
+                if child.path_cost < best_g_b.get(p, inf):
+                    best_g_b[p] = child.path_cost
                     nodes_b[p] = child
-                    heapq.heappush(front_b, (fbv, new_g, fifo_b, child))
+                    heapq.heappush(front_b, (fbv, fifo_b, p, child))
                     fifo_b += 1
                     node_count += 1
 

@@ -70,6 +70,9 @@ class SearchGUI(tk.Tk):
         self.anim_algo = tk.StringVar(value="A*")
         self.anim_result_path = []
 
+        # Session history
+        self.session_history = []
+
         # Selection state
         self.selected_algos = {name: tk.BooleanVar(value=name in ("A*", "BFS")) for name in ALGO_FUNCS}
 
@@ -81,130 +84,138 @@ class SearchGUI(tk.Tk):
 
     # ---------- Layout ----------
     def _build_layout(self):
-        # Narrower left pane, give most space to the graph/table on the right
-        LEFT_WIDTH = 380
-        self.columnconfigure(0, weight=0, minsize=LEFT_WIDTH)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
+        # Configure grid: top for canvas, bottom for controls/results
+        self.rowconfigure(0, weight=1)  # Top: canvas (takes most space)
+        self.rowconfigure(1, weight=0)  # Bottom: controls and results
+        self.columnconfigure(0, weight=1)
 
-        # Left control panel
-        left = ttk.Frame(self, padding=10)
-        left.grid(row=0, column=0, sticky="ns")
-        # Keep left panel from expanding beyond intended width
-        left.grid_propagate(False)
-
-        # File chooser
-        file_grp = ttk.LabelFrame(left, text="Test Case")
-        file_grp.pack(fill="x", pady=(0, 10))
-
-        self.file_var = tk.StringVar()
-        # Narrower combo to prevent left pane from growing too wide
-        self.file_combo = ttk.Combobox(file_grp, textvariable=self.file_var, state="readonly", width=32)
-        self.file_combo.pack(side="left", padx=(8, 4), pady=8)
-        self.file_combo.bind("<<ComboboxSelected>>", lambda e: self._load_problem())
-
-        ttk.Button(file_grp, text="Browse", command=self._browse_file).pack(side="left", padx=(4, 8), pady=8)
-
-        self.file_info = ttk.Label(file_grp, text="No file loaded", foreground="#555")
-        self.file_info.pack(fill="x", padx=8, pady=(0, 8))
-
-        # Algorithm selection
-        algo_grp = ttk.LabelFrame(left, text="Algorithms")
-        algo_grp.pack(fill="x", pady=(0, 10))
-
-        for name in ALGO_FUNCS:
-            row = ttk.Frame(algo_grp)
-            row.pack(fill="x", padx=6, pady=2)
-            ttk.Checkbutton(row, text=name, variable=self.selected_algos[name]).pack(side="left")
-            # Wrap long help text to keep left panel compact
-            ttk.Label(row, text=ALGO_HELP[name], foreground="#666", wraplength=260, justify="left").pack(side="left", padx=6)
-
-        opt_row = ttk.Frame(algo_grp)
-        opt_row.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Checkbutton(opt_row, text="Show edge costs", variable=self.draw_edge_costs, command=self._redraw_canvas).pack(side="left")
-        ttk.Checkbutton(opt_row, text="Show legend", variable=self.show_legend, command=self._redraw_canvas).pack(side="left", padx=(10, 0))
-
-        btn_row = ttk.Frame(algo_grp)
-        btn_row.pack(fill="x", padx=6, pady=(4, 8))
-        ttk.Button(btn_row, text="Run Selected", command=self._run_selected).pack(side="left", expand=True, fill="x")
-        ttk.Button(btn_row, text="Run All", command=self._run_all).pack(side="left", padx=6, expand=True, fill="x")
-
-        # Animation controls
-        anim_grp = ttk.LabelFrame(left, text="Animation")
-        anim_grp.pack(fill="x", pady=(0, 10))
-
-        anim_top = ttk.Frame(anim_grp)
-        anim_top.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Label(anim_top, text="Algorithm:").pack(side="left")
-        algo_names = list(ALGO_FUNCS.keys())
-        self.anim_algo_combo = ttk.Combobox(anim_top, textvariable=self.anim_algo, values=algo_names, state="readonly", width=8)
-        self.anim_algo_combo.pack(side="left", padx=(6, 0))
-        ttk.Button(anim_top, text="Run + Animate", command=self._run_animated).pack(side="left", padx=(10, 0))
-
-        anim_mid = ttk.Frame(anim_grp)
-        anim_mid.pack(fill="x", padx=6, pady=4)
-        ttk.Button(anim_mid, text="Play", command=self._play_animation).pack(side="left")
-        ttk.Button(anim_mid, text="Pause", command=self._pause_animation).pack(side="left", padx=6)
-        ttk.Button(anim_mid, text="Reset", command=self._reset_animation).pack(side="left")
-        ttk.Label(anim_mid, text="Speed").pack(side="left", padx=(10, 4))
-        self.anim_speed_scale = ttk.Scale(anim_mid, from_=50, to=1500, orient="horizontal",
-                                          command=lambda v: self.anim_speed.set(int(float(v))))
-        self.anim_speed_scale.set(self.anim_speed.get())
-        self.anim_speed_scale.pack(side="left", fill="x", expand=True)
-
-        anim_bot = ttk.Frame(anim_grp)
-        anim_bot.pack(fill="x", padx=6, pady=(4, 8))
-        ttk.Label(anim_bot, text="Step:").pack(side="left")
-        self.anim_step_var = tk.IntVar(value=0)
-        self.anim_step_slider = ttk.Scale(anim_bot, from_=0, to=0, orient="horizontal",
-                                          variable=self.anim_step_var, command=self._on_anim_slider)
-        self.anim_step_slider.configure(state="disabled")
-        self.anim_step_slider.pack(side="left", fill="x", expand=True, padx=(6, 0))
-
-        # Comparison summary
-        self.summary_grp = ttk.LabelFrame(left, text="Comparison")
-        self.summary_grp.pack(fill="both", expand=True)
-
-        self.summary_text = tk.Text(self.summary_grp, height=14, wrap="word")
-        self.summary_text.pack(fill="both", expand=True, padx=6, pady=6)
-        self.summary_text.insert("1.0", "Run algorithms to see per-metric winners here.")
-        self.summary_text.configure(state="disabled")
-
-        export_row = ttk.Frame(left)
-        export_row.pack(fill="x", pady=(8, 0))
-        ttk.Button(export_row, text="Export Results (CSV)", command=self._export_csv).pack(side="left", fill="x", expand=True)
-
-        # Right: canvas + table
-        right = ttk.Frame(self, padding=(0, 10, 10, 10))
-        right.grid(row=0, column=1, sticky="nsew")
-        right.rowconfigure(0, weight=1)
-        right.rowconfigure(1, weight=0)
-        right.columnconfigure(0, weight=1)
-
-        # Canvas area
-        canvas_grp = ttk.LabelFrame(right, text="Graph Preview")
-        canvas_grp.grid(row=0, column=0, sticky="nsew")
-
-        self.canvas = tk.Canvas(canvas_grp, background="#ffffff", height=500)
+        # ===== TOP: Canvas area (Graph only) =====
+        canvas_container = ttk.Frame(self, padding=10)
+        canvas_container.grid(row=0, column=0, sticky="nsew")
+        canvas_container.columnconfigure(0, weight=1)
+        canvas_container.rowconfigure(0, weight=1)
+        
+        # Graph canvas
+        graph_grp = ttk.LabelFrame(canvas_container, text="Graph Visualization")
+        graph_grp.grid(row=0, column=0, sticky="nsew")
+        
+        self.canvas = tk.Canvas(graph_grp, background="#ffffff")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda e: self._redraw_canvas())
 
-        # Results table
-        table_grp = ttk.LabelFrame(right, text="Results (click to visualize a path)")
-        table_grp.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        # ===== BOTTOM: Controls and History =====
+        bottom_container = ttk.Frame(self, padding=10)
+        bottom_container.grid(row=1, column=0, sticky="nsew")
+        bottom_container.rowconfigure(0, weight=1)
+        bottom_container.columnconfigure(0, weight=0)  # Left: Controls
+        bottom_container.columnconfigure(1, weight=1)  # Right: Session History
 
-        cols = ("Algorithm", "Goal", "Cost", "PathLen", "Path", "Nodes", "Time(ms)", "Trace")
-        self.table = ttk.Treeview(table_grp, columns=cols, show="headings", height=12)
-        col_widths = {"Algorithm": 90, "Goal": 60, "Cost": 60, "PathLen": 70, "Path": 200, "Nodes": 70, "Time(ms)": 80, "Trace": 60}
-        for c in cols:
-            self.table.heading(c, text=c)
-            self.table.column(c, anchor="center" if c != "Path" else "w", width=col_widths.get(c, 110))
-        self.table.pack(fill="both", expand=True)
-        self.table.bind("<<TreeviewSelect>>", self._on_table_select)
+        # LEFT: Controls in vertical layout
+        left_panel = ttk.Frame(bottom_container)
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        
+        # File chooser
+        file_grp = ttk.LabelFrame(left_panel, text="Test Case")
+        file_grp.pack(fill="x", pady=(0, 8))
+
+        file_row = ttk.Frame(file_grp)
+        file_row.pack(fill="x", padx=6, pady=6)
+        
+        self.file_var = tk.StringVar()
+        self.file_combo = ttk.Combobox(file_row, textvariable=self.file_var, state="readonly", width=35)
+        self.file_combo.pack(side="left", padx=(0, 4))
+        self.file_combo.bind("<<ComboboxSelected>>", lambda e: self._load_problem())
+        ttk.Button(file_row, text="Browse", command=self._browse_file).pack(side="left")
+
+        self.file_info = ttk.Label(file_grp, text="No file loaded", foreground="#666", wraplength=350, font=("Segoe UI", 8))
+        self.file_info.pack(fill="x", padx=6, pady=(0, 6))
+
+        # Animation controls
+        anim_grp = ttk.LabelFrame(left_panel, text="Animation Controls")
+        anim_grp.pack(fill="x", pady=(0, 8))
+
+        anim_top = ttk.Frame(anim_grp)
+        anim_top.pack(fill="x", padx=6, pady=(6, 4))
+        ttk.Label(anim_top, text="Algorithm:").pack(side="left", padx=(0, 4))
+        self.anim_algo_combo = ttk.Combobox(anim_top, textvariable=self.anim_algo, values=list(ALGO_FUNCS.keys()), state="readonly", width=12)
+        self.anim_algo_combo.pack(side="left", fill="x", expand=True)
+
+        anim_controls = ttk.Frame(anim_grp)
+        anim_controls.pack(fill="x", padx=6, pady=4)
+        ttk.Button(anim_controls, text="▶ Play", command=self._play_animation).pack(side="left", fill="x", expand=True, padx=(0, 2))
+        ttk.Button(anim_controls, text="⏸ Pause", command=self._pause_animation).pack(side="left", fill="x", expand=True, padx=2)
+        ttk.Button(anim_controls, text="⏹ Reset", command=self._reset_animation).pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        # Note about resetting
+        anim_note = ttk.Label(anim_grp, text="⚠ Note: Press Reset when changing test cases or algorithms", 
+                             foreground="#d32f2f", font=("Segoe UI", 8, "bold"))
+        anim_note.pack(fill="x", padx=6, pady=(0, 4))
+
+        anim_step = ttk.Frame(anim_grp)
+        anim_step.pack(fill="x", padx=6, pady=(4, 6))
+        ttk.Label(anim_step, text="Step:").pack(side="left")
+        self.anim_step_var = tk.IntVar(value=0)
+        self.anim_step_slider = ttk.Scale(anim_step, from_=0, to=0, orient="horizontal",
+                                          variable=self.anim_step_var, command=self._on_anim_slider)
+        self.anim_step_slider.configure(state="disabled")
+        self.anim_step_slider.pack(side="left", fill="x", expand=True, padx=4)
+
+        # Display options
+        opt_grp = ttk.LabelFrame(left_panel, text="Display Options")
+        opt_grp.pack(fill="x")
+        
+        opt_frame = ttk.Frame(opt_grp)
+        opt_frame.pack(fill="x", padx=6, pady=6)
+        ttk.Checkbutton(opt_frame, text="Show Edge Costs", variable=self.draw_edge_costs, command=self._redraw_canvas).pack(anchor="w")
+        ttk.Checkbutton(opt_frame, text="Show Legend", variable=self.show_legend, command=self._redraw_canvas).pack(anchor="w", pady=(4, 0))
+
+        # RIGHT: Test Results Table
+        right_panel = ttk.Frame(bottom_container)
+        right_panel.grid(row=0, column=1, sticky="nsew")
+        right_panel.rowconfigure(0, weight=1)
+        right_panel.columnconfigure(0, weight=1)
+        
+        # Results Table
+        results_grp = ttk.LabelFrame(right_panel, text="Algorithm Test Results")
+        results_grp.grid(row=0, column=0, sticky="nsew")
+        
+        # Create Treeview for results
+        results_frame = ttk.Frame(results_grp)
+        results_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        
+        cols = ("No.", "Test Case", "Algorithm", "Goal", "Nodes", "Path", "Time(ms)")
+        self.results_tree = ttk.Treeview(results_frame, columns=cols, show="headings", height=10)
+        
+        col_widths = {
+            "No.": 50,
+            "Test Case": 180,
+            "Algorithm": 80,
+            "Goal": 60,
+            "Nodes": 80,
+            "Path": 280,
+            "Time(ms)": 90
+        }
+        
+        for col in cols:
+            self.results_tree.heading(col, text=col)
+            if col == "Path":
+                self.results_tree.column(col, width=col_widths.get(col, 100), anchor="w")
+            else:
+                self.results_tree.column(col, width=col_widths.get(col, 80), anchor="center")
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_tree.yview)
+        self.results_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.results_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Clear results button
+        ttk.Button(results_grp, text="Clear Results", command=self._clear_history).pack(pady=(0, 6))
 
         # Status bar
         self.status = ttk.Label(self, text="Ready", relief="sunken", anchor="w")
-        self.status.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.status.grid(row=2, column=0, sticky="ew")
 
     # ---------- File ops ----------
     def _populate_test_files(self):
@@ -246,10 +257,9 @@ class SearchGUI(tk.Tk):
             n_edges = len(self.problem.edges)
             self.file_info.configure(text=f"Loaded {os.path.basename(path)} — Nodes: {n_nodes}, Edges: {n_edges}, Origin: {self.problem.origin}, Goals: {', '.join(map(str, self.problem.destinations))}")
             self.results.clear()
-            self._refresh_table()
             self.current_algo_to_draw = None
-            # reset animation state
-            self._reset_animation(clear_only=True)
+            # reset animation state (clear trace for new test case)
+            self._reset_animation(clear_only=False)
             self._redraw_canvas()
             self._set_status("Problem loaded.")
         except Exception as e:
@@ -298,38 +308,75 @@ class SearchGUI(tk.Tk):
 
         bbox = self._world_bounds()
 
+        # Track processed edges to handle bidirectional edges properly
+        drawn_edges = set()
+        
         # Draw edges (with arrows and optional costs)
         for (u, v), cost in self.problem.edges.items():
             if u not in self.problem.nodes or v not in self.problem.nodes:
                 continue
+            
+            # Skip if we already drew this edge pair
+            if (u, v) in drawn_edges or (v, u) in drawn_edges:
+                continue
+                
             x1, y1 = self.problem.nodes[u]
             x2, y2 = self.problem.nodes[v]
             c1 = self._world_to_canvas(x1, y1, bbox)
             c2 = self._world_to_canvas(x2, y2, bbox)
+            
+            # Check if reverse edge exists
+            reverse_cost = self.problem.edges.get((v, u))
+            has_reverse = reverse_cost is not None
+            
+            # Draw the line with arrow
             self.canvas.create_line(*c1, *c2, fill="#9aa0a6", width=2, arrow="last", arrowshape=(10, 12, 4))
+            
             if self.draw_edge_costs.get():
-                # Show cost label: numeric only, positioned on edge with smart offset
+                # Calculate edge geometry
                 dx = c2[0] - c1[0]
                 dy = c2[1] - c1[1]
                 length = (dx*dx + dy*dy) ** 0.5 or 1.0
-                # Position at midpoint along edge
-                t = 0.5
-                px = c1[0] + dx * t
-                py = c1[1] + dy * t
-                # Perpendicular offset to avoid overlapping the line
+                
+                # Perpendicular offset vector
                 nx = -dy / length
                 ny = dx / length
-                # Offset to one side based on edge direction for consistency
-                side = 1 if u < v else -1
-                off = 10 * side
-                lx = px + nx * off
-                ly = py + ny * off
-                # Draw numeric cost only (minimal clutter)
-                text_id = self.canvas.create_text(lx, ly, text=str(cost), fill="#202124", font=("Consolas", 9))
-                bx1, by1, bx2, by2 = self.canvas.bbox(text_id)
-                pad = 2
-                rect_id = self.canvas.create_rectangle(bx1 - pad, by1 - pad, bx2 + pad, by2 + pad, fill="#fff", outline="")
-                self.canvas.tag_raise(text_id, rect_id)
+                
+                if has_reverse and cost != reverse_cost:
+                    # Show directional costs: "→cost" format to indicate direction
+                    px = c1[0] + dx * 0.5
+                    py = c1[1] + dy * 0.5
+                    
+                    # Forward direction (u→v) - show with arrow
+                    off1 = 15
+                    lx1 = px + nx * off1
+                    ly1 = py + ny * off1
+                    self.canvas.create_text(lx1, ly1, text=f"→{cost}", 
+                                          fill="#1967d2", font=("Segoe UI", 9, "bold"))
+                    
+                    # Reverse direction (v→u) - show with reverse arrow
+                    off2 = -15
+                    lx2 = px + nx * off2
+                    ly2 = py + ny * off2
+                    self.canvas.create_text(lx2, ly2, text=f"←{reverse_cost}",
+                                          fill="#1967d2", font=("Segoe UI", 9, "bold"))
+                    
+                    # Mark both edges as drawn
+                    drawn_edges.add((u, v))
+                    drawn_edges.add((v, u))
+                else:
+                    # Single direction - just show the cost number
+                    px = c1[0] + dx * 0.5
+                    py = c1[1] + dy * 0.5
+                    off = 15
+                    lx = px + nx * off
+                    ly = py + ny * off
+                    
+                    self.canvas.create_text(lx, ly, text=str(cost), 
+                                          fill="#5f6368", font=("Segoe UI", 9, "bold"))
+                    drawn_edges.add((u, v))
+            else:
+                drawn_edges.add((u, v))
 
         # Draw selected path (under nodes) when not animating
         if self.current_algo_to_draw and self.current_algo_to_draw in self.results and not self.trace:
@@ -364,131 +411,6 @@ class SearchGUI(tk.Tk):
 
         # Legend overlay
         self._draw_legend()
-
-    # ---------- Run / Compare ----------
-    def _run_selected(self):
-        to_run = [name for name, var in self.selected_algos.items() if var.get()]
-        if not to_run:
-            messagebox.showinfo("No algorithms", "Please select at least one algorithm to run.")
-            return
-        self._start_run(to_run)
-
-    def _run_all(self):
-        self._start_run(list(ALGO_FUNCS.keys()))
-
-    def _start_run(self, algo_list):
-        if not self.problem:
-            messagebox.showinfo("No problem", "Load a test case first.")
-            return
-        if self._run_thread and self._run_thread.is_alive():
-            messagebox.showwarning("Busy", "A run is already in progress.")
-            return
-
-        self._stop_flag.clear()
-        self.results.clear()
-        self._refresh_table()
-        self.summary_text.configure(state="normal")
-        self.summary_text.delete("1.0", tk.END)
-        self.summary_text.insert("1.0", "Running algorithms...\n")
-        self.summary_text.configure(state="disabled")
-        self._set_status("Running...")
-
-        def worker():
-            for name in algo_list:
-                if self._stop_flag.is_set():
-                    break
-                fn = ALGO_FUNCS[name]
-                t0 = time.perf_counter()
-                result = fn(self.problem, observer=None)
-                t1 = time.perf_counter()
-
-                if not result:
-                    metrics = {
-                        "goal": None,
-                        "nodes": 0,
-                        "path": [],
-                        "cost": None,
-                        "time_ms": (t1 - t0) * 1000,
-                        "trace": 0,
-                    }
-                else:
-                    goal, nodes_created, path_str = result
-                    path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
-                    cost = self._compute_path_cost(path_nodes)
-                    metrics = {
-                        "goal": goal,
-                        "nodes": nodes_created,
-                        "path": path_nodes,
-                        "cost": cost,
-                        "time_ms": (t1 - t0) * 1000,
-                        "trace": 0,  # no observer in compare mode
-                    }
-                self.results[name] = metrics
-                self.after(0, self._refresh_table)
-
-            self.after(0, self._update_summary)
-            self.after(0, lambda: self._set_status("Done."))
-
-        self._run_thread = threading.Thread(target=worker, daemon=True)
-        self._run_thread.start()
-
-    def _update_summary(self):
-        if not self.results:
-            return
-        # Find winners per metric (smaller is better for time, nodes, cost; larger for path len sometimes not desired)
-        best_time = min((v["time_ms"], k) for k, v in self.results.items()) if self.results else (None, None)
-        best_nodes = min(((v["nodes"], k) for k, v in self.results.items() if v["nodes"] is not None), default=(None, None))
-        # Cost can be None when path invalid; filter
-        costs = [(v["cost"], k) for k, v in self.results.items() if v["cost"] is not None]
-        best_cost = min(costs) if costs else (None, None)
-
-        lines = []
-        lines.append("Summary of winners (lower is better):")
-        if best_time[1] is not None:
-            lines.append(f"• Fastest: {best_time[1]} ({best_time[0]:.3f} ms)")
-        if best_nodes[1] is not None:
-            lines.append(f"• Least Nodes Created: {best_nodes[1]} ({best_nodes[0]})")
-        if best_cost[1] is not None:
-            lines.append(f"• Lowest Path Cost: {best_cost[1]} ({best_cost[0]})")
-
-        # Add per-algorithm short lines
-        lines.append("\nPer-algorithm:")
-        for name in ALGO_FUNCS:
-            if name in self.results:
-                r = self.results[name]
-                goal = r["goal"] if r["goal"] is not None else "None"
-                cost = r["cost"] if r["cost"] is not None else "—"
-                lines.append(f"- {name}: goal={goal}, cost={cost}, nodes={r['nodes']}, time={r['time_ms']:.2f} ms")
-
-        self.summary_text.configure(state="normal")
-        self.summary_text.delete("1.0", tk.END)
-        self.summary_text.insert("1.0", "\n".join(lines))
-        self.summary_text.configure(state="disabled")
-
-    def _refresh_table(self):
-        for i in self.table.get_children():
-            self.table.delete(i)
-        for name in ALGO_FUNCS:
-            if name not in self.results:
-                continue
-            r = self.results[name]
-            goal = r["goal"] if r["goal"] is not None else "None"
-            cost = r["cost"] if r["cost"] is not None else "—"
-            path_len = len(r["path"]) if r["path"] else 0
-            path_str = " → ".join(map(str, r["path"])) if r["path"] else "—"
-            self.table.insert("", tk.END, iid=name, values=(name, goal, cost, path_len, path_str, r["nodes"], f"{r['time_ms']:.2f}", r["trace"]))
-
-    def _on_table_select(self, _):
-        sel = self.table.selection()
-        if not sel:
-            return
-        algo = sel[0]
-        if algo in self.results:
-            self.current_algo_to_draw = algo
-            self._redraw_canvas()
-            # Status includes path preview
-            path = self.results[algo].get("path") or []
-            self._set_status(f"Selected {algo}. Path: {' '.join(map(str, path)) if path else '—'}")
 
     # ---------- Utils ----------
     def _compute_path_cost(self, path_nodes):
@@ -560,7 +482,6 @@ class SearchGUI(tk.Tk):
                     "trace": len(self.trace),
                 }
                 self.results[algo] = metrics
-                self.after(0, self._refresh_table)
             
             self.after(0, self._on_animation_ready)
 
@@ -581,13 +502,76 @@ class SearchGUI(tk.Tk):
 
     def _on_animation_ready(self):
         total = len(self.trace)
-        self._set_status(f"Animation ready: {total} steps. Press Play to start.")
+        self._add_to_results()
+        self._set_status(f"Ready: {total} steps. Playing animation...")
+        # Auto-start playing
+        self.playing = True
+        self._tick_animation()
+    
+    def _add_to_results(self):
+        """Add completed test to results table."""
+        algo = self.anim_algo.get()
+        if algo not in self.results:
+            return
+        
+        r = self.results[algo]
+        test_case = os.path.basename(self.problem_path) if self.problem_path else "—"
+        
+        # Get row number (1-based, counting from top)
+        row_num = len(self.session_history) + 1
+        
+        # Store in history list
+        self.session_history.append({
+            "num": row_num,
+            "test_case": test_case,
+            "algo": algo,
+            "goal": r.get("goal", "—"),
+            "nodes": r.get("nodes", 0),
+            "path": r.get("path", []),
+            "time_ms": r.get("time_ms", 0)
+        })
+        
+        # Format path as "1 → 2 → 3"
+        path = r.get("path", [])
+        if path:
+            path_str = " → ".join(map(str, path))
+        else:
+            path_str = "—"
+        
+        values = (
+            str(row_num),
+            test_case,
+            algo,
+            str(r.get("goal", "—")),
+            str(r.get("nodes", 0)),
+            path_str,
+            f"{r.get('time_ms', 0):.2f}"
+        )
+        
+        self.results_tree.insert("", "end", values=values)  # Insert at bottom (chronological order)
+    
+    def _clear_history(self):
+        """Clear all test results."""
+        self.session_history.clear()
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+        self._set_status("Results cleared.")
 
     def _play_animation(self):
+        # If no trace, run the search first
         if not self.trace:
-            messagebox.showinfo("No trace", "Run + Animate first.")
+            self._run_animated()
             return
+        
+        # If at the end, automatically restart from beginning
+        if self.trace_index >= len(self.trace):
+            self.trace_index = 0
+            self.anim_step_var.set(0)
+            self._redraw_canvas()  # Redraw to show the first frame
+        
+        # Start playing
         self.playing = True
+        self._set_status(f"Playing animation... (Step {self.trace_index + 1}/{len(self.trace)})")
         self._tick_animation()
 
     def _pause_animation(self):
@@ -615,7 +599,10 @@ class SearchGUI(tk.Tk):
             self.playing = False
             return
         if self.trace_index >= len(self.trace):
+            # Animation finished - reset to beginning for next play
+            self.trace_index = 0
             self.playing = False
+            self._set_status("Animation complete. Press Play to replay.")
             return
         self._redraw_canvas()
         self.anim_step_var.set(self.trace_index)
@@ -753,25 +740,7 @@ class SearchGUI(tk.Tk):
         item(y, "#ff8a65", "#d84315", "Frontier (back)")
         y += row_h
         item(y, "#ba68c8", "#8e24aa", "Explored (back)")
-    def _export_csv(self):
-        if not self.results:
-            messagebox.showinfo("No results", "Run algorithms first.")
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], title="Export results to CSV")
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("Algorithm,Goal,Cost,PathLen,Nodes,Time(ms)\n")
-                for name, r in self.results.items():
-                    goal = r["goal"] if r["goal"] is not None else "None"
-                    cost = r["cost"] if r["cost"] is not None else ""
-                    path_len = len(r["path"]) if r["path"] else 0
-                    f.write(f"{name},{goal},{cost},{path_len},{r['nodes']},{r['time_ms']:.3f}\n")
-            messagebox.showinfo("Exported", f"Saved results to {path}")
-        except Exception as e:
-            messagebox.showerror("Export failed", str(e))
-
+    
     def _set_status(self, text):
         self.status.configure(text=text)
 

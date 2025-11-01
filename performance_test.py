@@ -89,26 +89,18 @@ def main():
         print(f"No .txt files found in {test_dir}")
         sys.exit(1)
     
-    print(f"\n{'='*100}")
-    print(f"Performance Test Suite - {len(test_files)} test file(s), {len(algorithms)} algorithm(s)")
-    print(f"{'='*100}\n")
-    
     all_results = []
     
     # Run tests
     for test_file in test_files:
         filename = os.path.basename(test_file)
-        print(f"Testing: {filename}")
         
         file_results = []
         for algo_name, algo_func in algorithms:
             try:
                 result = run_test(test_file, algo_name, algo_func)
                 file_results.append(result)
-                status = "[OK]" if result['goal'] is not None else "[--]"
-                print(f"  {status} {algo_name:6} - Goal: {result['goal'] or 'None':4} | Nodes: {result['nodes']:5} | Time: {result['time_ms']:7.2f}ms")
             except Exception as e:
-                print(f"  [!!] {algo_name:6} - ERROR: {str(e)}")
                 file_results.append({
                     'algorithm': algo_name,
                     'goal': None,
@@ -124,7 +116,6 @@ def main():
             'file': filename,
             'results': file_results
         })
-        print()
     
     # Print results in compact format
     print(f"\n{'='*100}")
