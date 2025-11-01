@@ -46,11 +46,11 @@ def main():
     
     # If no solution is found
     if not result:
-        print(f"Filename: {os.path.basename(filename)}")
-        print(f"Method: {method}")
+        print(f"File Name: {os.path.basename(filename)}")
+        print(f"Method: {method.upper()}")
         print(f"Goal: None")
         print(f"Number of Nodes: 0")
-        print(f"Path: No solution found.")
+        print(f"Path: No solution found")
         return
     
     # Check if result has 3 or 4 values and handle accordingly
@@ -60,12 +60,15 @@ def main():
     else:
         goal, num_nodes, expanded_nodes, path = result
     
+    # Format path with arrows
+    path_formatted = " -> ".join(path.split())
+    
     # Print the result in the required format
-    print(f"Filename: {os.path.basename(filename)}")
-    print(f"Method: {method}")
+    print(f"File Name: {os.path.basename(filename)}")
+    print(f"Method: {method.upper()}")
     print(f"Goal: {goal}")
     print(f"Number of Nodes: {num_nodes}")
-    print(f"Path: {path}")
+    print(f"Path: {path_formatted}")
 
 if __name__ == "__main__":
     main()

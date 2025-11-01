@@ -13,8 +13,9 @@ import os
 import sys
 import threading
 import time
+import queue
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 from src.parser import parse_problem
 from src.search_algorithms import dfs, bfs, gbfs, astar, cus1, cus2
@@ -44,8 +45,9 @@ class SearchGUI(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("AI Search Visualizer — Compare Algorithms")
-        self.geometry("1400x900")
+        self.title("AI Search Visualizer")
+        self.geometry("1200x800")
+        self.configure(bg="#f5f5f5")
         try:
             self.state("zoomed")
         except Exception:
@@ -69,142 +71,155 @@ class SearchGUI(tk.Tk):
         self.anim_speed = tk.IntVar(value=300)  # ms
         self.anim_algo = tk.StringVar(value="A*")
         self.anim_result_path = []
+        # Thread-safe queue for trace steps from worker thread
+        self.trace_queue = queue.Queue()
 
-        # Selection state
-        self.selected_algos = {name: tk.BooleanVar(value=name in ("A*", "BFS")) for name in ALGO_FUNCS}
 
         self._build_layout()
         self._populate_test_files()
+        
+        # Start periodic check for trace steps from worker thread
+        self._process_trace_queue()
 
         # Ensure hard exit on window close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------- Layout ----------
     def _build_layout(self):
-        # Narrower left pane, give most space to the graph/table on the right
-        LEFT_WIDTH = 380
-        self.columnconfigure(0, weight=0, minsize=LEFT_WIDTH)
-        self.columnconfigure(1, weight=1)
+        # Configure grid: main canvas area with sidebar
         self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0)
 
-        # Left control panel
-        left = ttk.Frame(self, padding=10)
-        left.grid(row=0, column=0, sticky="ns")
-        # Keep left panel from expanding beyond intended width
-        left.grid_propagate(False)
-
-        # File chooser
-        file_grp = ttk.LabelFrame(left, text="Test Case")
-        file_grp.pack(fill="x", pady=(0, 10))
-
-        self.file_var = tk.StringVar()
-        # Narrower combo to prevent left pane from growing too wide
-        self.file_combo = ttk.Combobox(file_grp, textvariable=self.file_var, state="readonly", width=32)
-        self.file_combo.pack(side="left", padx=(8, 4), pady=8)
-        self.file_combo.bind("<<ComboboxSelected>>", lambda e: self._load_problem())
-
-        ttk.Button(file_grp, text="Browse", command=self._browse_file).pack(side="left", padx=(4, 8), pady=8)
-
-        self.file_info = ttk.Label(file_grp, text="No file loaded", foreground="#555")
-        self.file_info.pack(fill="x", padx=8, pady=(0, 8))
-
-        # Algorithm selection
-        algo_grp = ttk.LabelFrame(left, text="Algorithms")
-        algo_grp.pack(fill="x", pady=(0, 10))
-
-        for name in ALGO_FUNCS:
-            row = ttk.Frame(algo_grp)
-            row.pack(fill="x", padx=6, pady=2)
-            ttk.Checkbutton(row, text=name, variable=self.selected_algos[name]).pack(side="left")
-            # Wrap long help text to keep left panel compact
-            ttk.Label(row, text=ALGO_HELP[name], foreground="#666", wraplength=260, justify="left").pack(side="left", padx=6)
-
-        opt_row = ttk.Frame(algo_grp)
-        opt_row.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Checkbutton(opt_row, text="Show edge costs", variable=self.draw_edge_costs, command=self._redraw_canvas).pack(side="left")
-        ttk.Checkbutton(opt_row, text="Show legend", variable=self.show_legend, command=self._redraw_canvas).pack(side="left", padx=(10, 0))
-
-        btn_row = ttk.Frame(algo_grp)
-        btn_row.pack(fill="x", padx=6, pady=(4, 8))
-        ttk.Button(btn_row, text="Run Selected", command=self._run_selected).pack(side="left", expand=True, fill="x")
-        ttk.Button(btn_row, text="Run All", command=self._run_all).pack(side="left", padx=6, expand=True, fill="x")
-
-        # Animation controls
-        anim_grp = ttk.LabelFrame(left, text="Animation")
-        anim_grp.pack(fill="x", pady=(0, 10))
-
-        anim_top = ttk.Frame(anim_grp)
-        anim_top.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Label(anim_top, text="Algorithm:").pack(side="left")
-        algo_names = list(ALGO_FUNCS.keys())
-        self.anim_algo_combo = ttk.Combobox(anim_top, textvariable=self.anim_algo, values=algo_names, state="readonly", width=8)
-        self.anim_algo_combo.pack(side="left", padx=(6, 0))
-        ttk.Button(anim_top, text="Run + Animate", command=self._run_animated).pack(side="left", padx=(10, 0))
-
-        anim_mid = ttk.Frame(anim_grp)
-        anim_mid.pack(fill="x", padx=6, pady=4)
-        ttk.Button(anim_mid, text="Play", command=self._play_animation).pack(side="left")
-        ttk.Button(anim_mid, text="Pause", command=self._pause_animation).pack(side="left", padx=6)
-        ttk.Button(anim_mid, text="Reset", command=self._reset_animation).pack(side="left")
-        ttk.Label(anim_mid, text="Speed").pack(side="left", padx=(10, 4))
-        self.anim_speed_scale = ttk.Scale(anim_mid, from_=50, to=1500, orient="horizontal",
-                                          command=lambda v: self.anim_speed.set(int(float(v))))
-        self.anim_speed_scale.set(self.anim_speed.get())
-        self.anim_speed_scale.pack(side="left", fill="x", expand=True)
-
-        anim_bot = ttk.Frame(anim_grp)
-        anim_bot.pack(fill="x", padx=6, pady=(4, 8))
-        ttk.Label(anim_bot, text="Step:").pack(side="left")
-        self.anim_step_var = tk.IntVar(value=0)
-        self.anim_step_slider = ttk.Scale(anim_bot, from_=0, to=0, orient="horizontal",
-                                          variable=self.anim_step_var, command=self._on_anim_slider)
-        self.anim_step_slider.configure(state="disabled")
-        self.anim_step_slider.pack(side="left", fill="x", expand=True, padx=(6, 0))
-
-        # Comparison summary
-        self.summary_grp = ttk.LabelFrame(left, text="Comparison")
-        self.summary_grp.pack(fill="both", expand=True)
-
-        self.summary_text = tk.Text(self.summary_grp, height=14, wrap="word")
-        self.summary_text.pack(fill="both", expand=True, padx=6, pady=6)
-        self.summary_text.insert("1.0", "Run algorithms to see per-metric winners here.")
-        self.summary_text.configure(state="disabled")
-
-        export_row = ttk.Frame(left)
-        export_row.pack(fill="x", pady=(8, 0))
-        ttk.Button(export_row, text="Export Results (CSV)", command=self._export_csv).pack(side="left", fill="x", expand=True)
-
-        # Right: canvas + table
-        right = ttk.Frame(self, padding=(0, 10, 10, 10))
-        right.grid(row=0, column=1, sticky="nsew")
-        right.rowconfigure(0, weight=1)
-        right.rowconfigure(1, weight=0)
-        right.columnconfigure(0, weight=1)
-
-        # Canvas area
-        canvas_grp = ttk.LabelFrame(right, text="Graph Preview")
-        canvas_grp.grid(row=0, column=0, sticky="nsew")
-
-        self.canvas = tk.Canvas(canvas_grp, background="#ffffff", height=500)
+        # ===== MAIN: Canvas area (Graph + Tree side by side) =====
+        canvas_container = tk.Frame(self, bg="#f5f5f5")
+        canvas_container.grid(row=0, column=0, sticky="nsew", padx=(0, 1))
+        canvas_container.columnconfigure(0, weight=1)
+        canvas_container.columnconfigure(1, weight=1)
+        canvas_container.rowconfigure(0, weight=1)
+        
+        # Left: Graph canvas
+        graph_frame = tk.Frame(canvas_container, bg="#ffffff", relief="flat")
+        graph_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 1))
+        
+        self.canvas = tk.Canvas(graph_frame, background="#ffffff", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda e: self._redraw_canvas())
+        
+        # Right: Tree canvas
+        tree_frame = tk.Frame(canvas_container, bg="#ffffff", relief="flat")
+        tree_frame.grid(row=0, column=1, sticky="nsew")
+        
+        self.tree_canvas = tk.Canvas(tree_frame, background="#fafafa", highlightthickness=0)
+        self.tree_canvas.pack(fill="both", expand=True)
+        self.tree_canvas.bind("<Configure>", lambda e: self._redraw_tree_canvas())
 
-        # Results table
-        table_grp = ttk.LabelFrame(right, text="Results (click to visualize a path)")
-        table_grp.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        # ===== SIDEBAR: Minimal Controls =====
+        sidebar = tk.Frame(self, bg="#2c3e50", width=280)
+        sidebar.grid(row=0, column=1, sticky="nsew")
+        sidebar.grid_propagate(False)
 
-        cols = ("Algorithm", "Goal", "Cost", "PathLen", "Path", "Nodes", "Time(ms)", "Trace")
-        self.table = ttk.Treeview(table_grp, columns=cols, show="headings", height=12)
-        col_widths = {"Algorithm": 90, "Goal": 60, "Cost": 60, "PathLen": 70, "Path": 200, "Nodes": 70, "Time(ms)": 80, "Trace": 60}
-        for c in cols:
-            self.table.heading(c, text=c)
-            self.table.column(c, anchor="center" if c != "Path" else "w", width=col_widths.get(c, 110))
-        self.table.pack(fill="both", expand=True)
-        self.table.bind("<<TreeviewSelect>>", self._on_table_select)
+        # Title
+        title_frame = tk.Frame(sidebar, bg="#2c3e50")
+        title_frame.pack(fill="x", pady=(20, 30))
+        tk.Label(title_frame, text="Search Visualizer", font=("Segoe UI", 18, "bold"), 
+                bg="#2c3e50", fg="#ecf0f1").pack()
 
-        # Status bar
-        self.status = ttk.Label(self, text="Ready", relief="sunken", anchor="w")
-        self.status.grid(row=1, column=0, columnspan=2, sticky="ew")
+        # File selection
+        file_frame = tk.Frame(sidebar, bg="#2c3e50")
+        file_frame.pack(fill="x", padx=20, pady=(0, 20))
+        
+        tk.Label(file_frame, text="Test Case", font=("Segoe UI", 10, "bold"), 
+                bg="#2c3e50", fg="#95a5a6", anchor="w").pack(fill="x", pady=(0, 8))
+        
+        self.file_var = tk.StringVar()
+        self.file_combo = ttk.Combobox(file_frame, textvariable=self.file_var, state="readonly", 
+                                      width=22, font=("Segoe UI", 9))
+        self.file_combo.pack(fill="x", pady=(0, 6))
+        self.file_combo.bind("<<ComboboxSelected>>", lambda e: self._load_problem())
+        
+        tk.Button(file_frame, text="Browse", command=self._browse_file, 
+                 bg="#3498db", fg="white", relief="flat", padx=10, pady=4,
+                 font=("Segoe UI", 9), cursor="hand2",
+                 activebackground="#2980b9", activeforeground="white").pack(fill="x")
+        
+        self.file_info = tk.Label(file_frame, text="No file loaded", 
+                                  fg="#7f8c8d", bg="#2c3e50", font=("Segoe UI", 8),
+                                  wraplength=240, justify="left", anchor="w")
+        self.file_info.pack(fill="x", pady=(6, 0))
+
+        # Algorithm selection
+        algo_frame = tk.Frame(sidebar, bg="#2c3e50")
+        algo_frame.pack(fill="x", padx=20, pady=(0, 20))
+        
+        tk.Label(algo_frame, text="Algorithm", font=("Segoe UI", 10, "bold"), 
+                bg="#2c3e50", fg="#95a5a6", anchor="w").pack(fill="x", pady=(0, 8))
+        
+        algo_names = list(ALGO_FUNCS.keys())
+        self.anim_algo_combo = ttk.Combobox(algo_frame, textvariable=self.anim_algo, 
+                                           values=algo_names, state="readonly", 
+                                           width=22, font=("Segoe UI", 9))
+        self.anim_algo_combo.pack(fill="x")
+
+        # Animation controls
+        anim_frame = tk.Frame(sidebar, bg="#2c3e50")
+        anim_frame.pack(fill="x", padx=20, pady=(0, 20))
+        
+        # Control buttons
+        btn_frame = tk.Frame(anim_frame, bg="#2c3e50")
+        btn_frame.pack(fill="x", pady=(0, 12))
+        
+        self.play_btn = tk.Button(btn_frame, text="▶ Play", command=self._play_animation,
+                                  bg="#27ae60", fg="white", relief="flat", padx=15, pady=10,
+                                  font=("Segoe UI", 11, "bold"), cursor="hand2",
+                                  activebackground="#229954", activeforeground="white")
+        self.play_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        
+        self.pause_btn = tk.Button(btn_frame, text="⏸", command=self._pause_animation,
+                                   bg="#e74c3c", fg="white", relief="flat", padx=10, pady=10,
+                                   font=("Segoe UI", 11), cursor="hand2",
+                                   activebackground="#c0392b", activeforeground="white")
+        self.pause_btn.pack(side="left", padx=(0, 4))
+        
+        self.reset_btn = tk.Button(btn_frame, text="⏹", command=self._reset_animation,
+                                   bg="#95a5a6", fg="white", relief="flat", padx=10, pady=10,
+                                   font=("Segoe UI", 11), cursor="hand2",
+                                   activebackground="#7f8c8d", activeforeground="white")
+        self.reset_btn.pack(side="left")
+        
+        # Speed control
+        speed_frame = tk.Frame(anim_frame, bg="#2c3e50")
+        speed_frame.pack(fill="x", pady=(0, 8))
+        
+        tk.Label(speed_frame, text="Speed", font=("Segoe UI", 9), 
+                bg="#2c3e50", fg="#95a5a6").pack(anchor="w", pady=(0, 4))
+        self.anim_speed_scale = ttk.Scale(speed_frame, from_=50, to=1500, orient="horizontal",
+                                          command=lambda v: self.anim_speed.set(int(float(v))))
+        self.anim_speed_scale.set(self.anim_speed.get())
+        self.anim_speed_scale.pack(fill="x")
+        
+        # Step slider
+        step_frame = tk.Frame(anim_frame, bg="#2c3e50")
+        step_frame.pack(fill="x", pady=(0, 12))
+        
+        step_info_frame = tk.Frame(step_frame, bg="#2c3e50")
+        step_info_frame.pack(fill="x", pady=(0, 6))
+        tk.Label(step_info_frame, text="Step", font=("Segoe UI", 9), 
+                bg="#2c3e50", fg="#95a5a6").pack(side="left")
+        self.step_info_label = tk.Label(step_info_frame, text="0/0", font=("Segoe UI", 9, "bold"),
+                                        bg="#2c3e50", fg="#ecf0f1")
+        self.step_info_label.pack(side="right")
+        
+        self.anim_step_var = tk.IntVar(value=0)
+        self.anim_step_slider = ttk.Scale(step_frame, from_=0, to=0, orient="horizontal",
+                                          variable=self.anim_step_var, command=self._on_anim_slider)
+        self.anim_step_slider.configure(state="disabled")
+        self.anim_step_slider.pack(fill="x")
+
+        # Status
+        self.status = tk.Label(sidebar, text="Ready", anchor="w", padx=20, pady=10,
+                               bg="#34495e", fg="#ecf0f1", font=("Segoe UI", 9))
+        self.status.pack(side="bottom", fill="x")
 
     # ---------- File ops ----------
     def _populate_test_files(self):
@@ -244,13 +259,12 @@ class SearchGUI(tk.Tk):
             self.problem_path = full
             n_nodes = len(self.problem.nodes)
             n_edges = len(self.problem.edges)
-            self.file_info.configure(text=f"Loaded {os.path.basename(path)} — Nodes: {n_nodes}, Edges: {n_edges}, Origin: {self.problem.origin}, Goals: {', '.join(map(str, self.problem.destinations))}")
-            self.results.clear()
-            self._refresh_table()
+            self.file_info.configure(text=f"{os.path.basename(path)} — {n_nodes} nodes, {n_edges} edges")
             self.current_algo_to_draw = None
             # reset animation state
             self._reset_animation(clear_only=True)
             self._redraw_canvas()
+            self._redraw_tree_canvas()
             self._set_status("Problem loaded.")
         except Exception as e:
             messagebox.showerror("Failed to load", str(e))
@@ -298,7 +312,9 @@ class SearchGUI(tk.Tk):
 
         bbox = self._world_bounds()
 
-        # Draw edges (with arrows and optional costs)
+        # Draw edges (with arrows and costs)
+        # First pass: collect edge positions to avoid overlaps
+        edge_info = {}
         for (u, v), cost in self.problem.edges.items():
             if u not in self.problem.nodes or v not in self.problem.nodes:
                 continue
@@ -306,44 +322,61 @@ class SearchGUI(tk.Tk):
             x2, y2 = self.problem.nodes[v]
             c1 = self._world_to_canvas(x1, y1, bbox)
             c2 = self._world_to_canvas(x2, y2, bbox)
-            self.canvas.create_line(*c1, *c2, fill="#9aa0a6", width=2, arrow="last", arrowshape=(10, 12, 4))
-            if self.draw_edge_costs.get():
-                # Show cost label: numeric only, positioned on edge with smart offset
+            
+            # Check if reverse edge exists to determine offset
+            has_reverse = (v, u) in self.problem.edges
+            edge_key = tuple(sorted([u, v]))  # Use sorted tuple as key for bidirectional edges
+            
+            if edge_key not in edge_info:
+                edge_info[edge_key] = []
+            edge_info[edge_key].append(((u, v), cost, c1, c2, has_reverse))
+        
+        # Draw edges and labels with smart positioning
+        for edge_key, edges_list in edge_info.items():
+            for idx, ((u, v), cost, c1, c2, has_reverse) in enumerate(edges_list):
+                self.canvas.create_line(*c1, *c2, fill="#e0e0e0", width=1.5, arrow="last", arrowshape=(8, 10, 3))
+                
+                # Draw edge cost label with smart offset
                 dx = c2[0] - c1[0]
                 dy = c2[1] - c1[1]
                 length = (dx*dx + dy*dy) ** 0.5 or 1.0
-                # Position at midpoint along edge
-                t = 0.5
+                # Position at midpoint along edge, slightly offset along the edge for bidirectional
+                t = 0.55 if (has_reverse and idx == 0) else 0.45 if (has_reverse and len(edges_list) > 1) else 0.5
                 px = c1[0] + dx * t
                 py = c1[1] + dy * t
                 # Perpendicular offset to avoid overlapping the line
                 nx = -dy / length
                 ny = dx / length
-                # Offset to one side based on edge direction for consistency
-                side = 1 if u < v else -1
-                off = 10 * side
+                # For bidirectional edges, offset more to separate them
+                if has_reverse and len(edges_list) > 1:
+                    # First edge goes to one side, second goes to opposite
+                    side = 1 if idx == 0 else -1
+                    off = 18 * side  # Larger offset for bidirectional
+                else:
+                    # Single direction or first edge
+                    side = 1 if u < v else -1
+                    off = 14 * side
                 lx = px + nx * off
                 ly = py + ny * off
-                # Draw numeric cost only (minimal clutter)
-                text_id = self.canvas.create_text(lx, ly, text=str(cost), fill="#202124", font=("Consolas", 9))
+                # Draw cost label
+                text_id = self.canvas.create_text(lx, ly, text=str(cost), fill="#666", font=("Segoe UI", 8))
                 bx1, by1, bx2, by2 = self.canvas.bbox(text_id)
-                pad = 2
-                rect_id = self.canvas.create_rectangle(bx1 - pad, by1 - pad, bx2 + pad, by2 + pad, fill="#fff", outline="")
-                self.canvas.tag_raise(text_id, rect_id)
+                pad = 3
+                rect_id = self.canvas.create_rectangle(bx1 - pad, by1 - pad, bx2 + pad, by2 + pad, 
+                                                      fill="#ffffff", outline="#e0e0e0", width=1)
+                self.canvas.tag_lower(rect_id)
+                self.canvas.tag_raise(text_id)
 
-        # Draw selected path (under nodes) when not animating
-        if self.current_algo_to_draw and self.current_algo_to_draw in self.results and not self.trace:
-            path = self.results[self.current_algo_to_draw].get("path") or []
-            if len(path) >= 2:
-                for i in range(len(path) - 1):
-                    u, v = path[i], path[i + 1]
-                    if u in self.problem.nodes and v in self.problem.nodes:
-                        x1, y1 = self.problem.nodes[u]
-                        x2, y2 = self.problem.nodes[v]
-                        c1 = self._world_to_canvas(x1, y1, bbox)
-                        c2 = self._world_to_canvas(x2, y2, bbox)
-                        # Thinner path to avoid occluding labels
-                        self.canvas.create_line(*c1, *c2, fill="#34a853", width=3)
+        # Draw final path if animation completed
+        if self.anim_result_path and len(self.anim_result_path) >= 2 and not self.trace:
+            for i in range(len(self.anim_result_path) - 1):
+                u, v = self.anim_result_path[i], self.anim_result_path[i + 1]
+                if u in self.problem.nodes and v in self.problem.nodes:
+                    x1, y1 = self.problem.nodes[u]
+                    x2, y2 = self.problem.nodes[v]
+                    c1 = self._world_to_canvas(x1, y1, bbox)
+                    c2 = self._world_to_canvas(x2, y2, bbox)
+                    self.canvas.create_line(*c1, *c2, fill="#27ae60", width=3)
 
         # Draw nodes
         for nid, (x, y) in self.problem.nodes.items():
@@ -362,7 +395,7 @@ class SearchGUI(tk.Tk):
         if self.trace and 0 <= self.trace_index < len(self.trace):
             self._draw_step_on_canvas(self.trace[self.trace_index])
 
-        # Legend overlay
+        # Legend overlay (simplified, always visible)
         self._draw_legend()
 
     # ---------- Run / Compare ----------
@@ -394,40 +427,50 @@ class SearchGUI(tk.Tk):
         self._set_status("Running...")
 
         def worker():
-            for name in algo_list:
-                if self._stop_flag.is_set():
-                    break
-                fn = ALGO_FUNCS[name]
-                t0 = time.perf_counter()
-                result = fn(self.problem, observer=None)
-                t1 = time.perf_counter()
+            try:
+                for name in algo_list:
+                    if self._stop_flag.is_set():
+                        break
+                    fn = ALGO_FUNCS[name]
+                    t0 = time.perf_counter()
+                    try:
+                        result = fn(self.problem, observer=None)
+                    except Exception as e:
+                        err_msg = str(e)
+                        self.after(0, lambda n=name, msg=err_msg: messagebox.showerror(f"Error in {n}", f"Algorithm {n} failed:\n{msg}"))
+                        result = None
+                    t1 = time.perf_counter()
 
-                if not result:
-                    metrics = {
-                        "goal": None,
-                        "nodes": 0,
-                        "path": [],
-                        "cost": None,
-                        "time_ms": (t1 - t0) * 1000,
-                        "trace": 0,
-                    }
-                else:
-                    goal, nodes_created, path_str = result
-                    path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
-                    cost = self._compute_path_cost(path_nodes)
-                    metrics = {
-                        "goal": goal,
-                        "nodes": nodes_created,
-                        "path": path_nodes,
-                        "cost": cost,
-                        "time_ms": (t1 - t0) * 1000,
-                        "trace": 0,  # no observer in compare mode
-                    }
-                self.results[name] = metrics
-                self.after(0, self._refresh_table)
+                    if not result:
+                        metrics = {
+                            "goal": None,
+                            "nodes": 0,
+                            "path": [],
+                            "cost": None,
+                            "time_ms": (t1 - t0) * 1000,
+                            "trace": 0,
+                        }
+                    else:
+                        goal, nodes_created, path_str = result
+                        path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
+                        cost = self._compute_path_cost(path_nodes)
+                        metrics = {
+                            "goal": goal,
+                            "nodes": nodes_created,
+                            "path": path_nodes,
+                            "cost": cost,
+                            "time_ms": (t1 - t0) * 1000,
+                            "trace": 0,  # no observer in compare mode
+                        }
+                    self.results[name] = metrics
+                    self.after(0, self._refresh_table)
 
-            self.after(0, self._update_summary)
-            self.after(0, lambda: self._set_status("Done."))
+                self.after(0, self._update_summary)
+                self.after(0, lambda: self._set_status("Done."))
+            except Exception as e:
+                err_msg = str(e)
+                self.after(0, lambda msg=err_msg: messagebox.showerror("Runtime Error", f"An error occurred while running algorithms:\n{msg}"))
+                self.after(0, lambda msg=err_msg: self._set_status(f"Error: {msg}"))
 
         self._run_thread = threading.Thread(target=worker, daemon=True)
         self._run_thread.start()
@@ -535,58 +578,135 @@ class SearchGUI(tk.Tk):
                     snap[k] = list(v)
                 else:
                     snap[k] = v
-            # Append via Tk thread for safety
-            self.after(0, lambda s=snap: self._append_trace_step(s))
+            # Put in queue for thread-safe access from worker thread
+            self.trace_queue.put(snap)
 
         def worker():
-            fn = ALGO_FUNCS[algo]
-            t0 = time.perf_counter()
-            result = fn(self.problem, observer=observer)
-            t1 = time.perf_counter()
-            
-            if result:
-                goal, nodes_created, path_str = result
-                path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
-                self.anim_result_path = path_nodes
+            try:
+                fn = ALGO_FUNCS[algo]
+                t0 = time.perf_counter()
+                try:
+                    result = fn(self.problem, observer=observer)
+                except Exception as e:
+                    err_msg = str(e)
+                    self.after(0, lambda msg=err_msg, alg=algo: messagebox.showerror(f"Error in {alg}", f"Algorithm {alg} failed:\n{msg}"))
+                    self.after(0, lambda msg=err_msg: self._set_status(f"Error: {msg}"))
+                    return
+                t1 = time.perf_counter()
                 
-                # Store result in results dict for table display
-                cost = self._compute_path_cost(path_nodes)
-                metrics = {
-                    "goal": goal,
-                    "nodes": nodes_created,
-                    "path": path_nodes,
-                    "cost": cost,
-                    "time_ms": (t1 - t0) * 1000,
-                    "trace": len(self.trace),
-                }
+                if result:
+                    goal, nodes_created, path_str = result
+                    path_nodes = [int(tok) for tok in path_str.split()] if path_str else []
+                    self.anim_result_path = path_nodes
+                    
+                    # Store result in results dict for table display
+                    cost = self._compute_path_cost(path_nodes)
+                    metrics = {
+                        "goal": goal,
+                        "nodes": nodes_created,
+                        "path": path_nodes,
+                        "cost": cost,
+                        "time_ms": (t1 - t0) * 1000,
+                        "trace": len(self.trace),
+                    }
                 self.results[algo] = metrics
                 self.after(0, self._refresh_table)
-            
-            self.after(0, self._on_animation_ready)
+                
+                # Mark that algorithm finished - trace queue processor will check when queue is empty
+                self.trace_queue.put(None)  # Sentinel to mark completion
+            except Exception as e:
+                err_msg = str(e)
+                self.after(0, lambda msg=err_msg: messagebox.showerror("Runtime Error", f"An error occurred while running animation:\n{msg}"))
+                self.after(0, lambda msg=err_msg: self._set_status(f"Error: {msg}"))
 
         self._stop_flag.clear()
         self._run_thread = threading.Thread(target=worker, daemon=True)
         self._run_thread.start()
 
+    def _process_trace_queue(self):
+        """Periodically process trace steps from the queue (thread-safe)."""
+        try:
+            while True:
+                step = self.trace_queue.get_nowait()
+                if step is None:
+                    # Sentinel - algorithm finished
+                    self.after(100, self._check_animation_complete)
+                else:
+                    self._append_trace_step(step)
+        except queue.Empty:
+            pass
+        # Check again soon
+        self.after(10, self._process_trace_queue)
+    
+    def _check_animation_complete(self):
+        """Check if animation is ready after algorithm completes."""
+        # Process any remaining items in queue
+        self._process_trace_queue()
+        # Now check if we have trace steps
+        self._on_animation_ready()
+    
     def _append_trace_step(self, step):
         self.trace.append(step)
         # Update slider range
         if len(self.trace) == 1:
             self.anim_step_slider.configure(state="normal")
         self.anim_step_slider.configure(to=max(0, len(self.trace) - 1))
+        # Update step info
+        self._update_step_info()
         # Draw first step immediately
         if len(self.trace) == 1:
             self.trace_index = 0
             self._redraw_canvas()
-
+    
+    def _update_step_info(self):
+        """Update the step information display in sidebar."""
+        if hasattr(self, 'step_info_label'):
+            if self.trace:
+                current = self.trace_index + 1
+                total = len(self.trace)
+                self.step_info_label.configure(text=f"{current}/{total}")
+            else:
+                self.step_info_label.configure(text="0/0")
+    
     def _on_animation_ready(self):
-        total = len(self.trace)
-        self._set_status(f"Animation ready: {total} steps. Press Play to start.")
+        # Process any pending GUI updates to ensure trace steps are appended
+        self.update_idletasks()
+        # Give a small delay for any remaining callbacks
+        def check_ready(count=0):
+            total = len(self.trace)
+            if total > 0:
+                self._set_status(f"Ready: {total} steps")
+                self.anim_step_slider.configure(to=max(0, total - 1))
+                # Auto-start animation
+                self.playing = True
+                self._tick_animation()
+            elif count < 10:  # Try up to 10 times (1 second total)
+                # If still no trace, wait a bit more for callbacks
+                next_count = count + 1
+                self.after(100, lambda c=next_count: check_ready(c))
+            else:
+                # If no trace after waiting, something went wrong
+                self._set_status(f"No trace generated")
+        check_ready()
 
     def _play_animation(self):
+        # Process any pending GUI updates first
+        self.update_idletasks()
+        
+        # If no trace, automatically run the algorithm first
         if not self.trace:
-            messagebox.showinfo("No trace", "Run + Animate first.")
+            if not self.problem:
+                messagebox.showinfo("No problem", "Load a test case first.")
+                return
+            if self._run_thread and self._run_thread.is_alive():
+                messagebox.showinfo("Please wait", "Algorithm is still running. Please wait for it to complete.")
+                return
+            
+            # Auto-run the selected algorithm
+            self._run_animated()
             return
+        
+        # Start playing the animation
         self.playing = True
         self._tick_animation()
 
@@ -606,7 +726,9 @@ class SearchGUI(tk.Tk):
             self.trace = []
             self.anim_result_path = []
             self.anim_step_slider.configure(state="disabled", to=0)
+        self._update_step_info()
         self._redraw_canvas()
+        self._redraw_tree_canvas()
 
     def _tick_animation(self):
         if not self.playing:
@@ -618,7 +740,9 @@ class SearchGUI(tk.Tk):
             self.playing = False
             return
         self._redraw_canvas()
+        self._redraw_tree_canvas()
         self.anim_step_var.set(self.trace_index)
+        self._update_step_info()
         self.trace_index += 1
         self.anim_timer = self.after(self.anim_speed.get(), self._tick_animation)
 
@@ -629,14 +753,35 @@ class SearchGUI(tk.Tk):
         idx = int(float(self.anim_step_var.get()))
         idx = max(0, min(idx, len(self.trace) - 1))
         self.trace_index = idx
+        self._update_step_info()
         self._redraw_canvas()
+        self._redraw_tree_canvas()
 
     def _draw_step_on_canvas(self, step):
         # Overlay current step information: explored/frontier/current and goal path if present
         if not self.problem:
             return
         bbox = self._world_bounds()
-        # Draw final path first (under overlays)
+        
+        # Draw path from origin to current node for better tracking
+        current = step.get("current")
+        path = step.get("path", [])
+        if path and len(path) >= 2:
+            # Highlight the path taken so far
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i + 1]
+                if u in self.problem.nodes and v in self.problem.nodes:
+                    x1, y1 = self.problem.nodes[u]
+                    x2, y2 = self.problem.nodes[v]
+                    c1 = self._world_to_canvas(x1, y1, bbox)
+                    c2 = self._world_to_canvas(x2, y2, bbox)
+                    # Highlight the edge being traversed
+                    if i == len(path) - 2:  # Last edge (to current node)
+                        self.canvas.create_line(*c1, *c2, fill="#27ae60", width=4, arrow="last", arrowshape=(12, 15, 4))
+                    else:
+                        self.canvas.create_line(*c1, *c2, fill="#27ae60", width=3)
+        
+        # Draw final path if goal reached
         if step.get("action") == "goal" and self.anim_result_path and len(self.anim_result_path) >= 2:
             for i in range(len(self.anim_result_path) - 1):
                 u, v = self.anim_result_path[i], self.anim_result_path[i + 1]
@@ -645,7 +790,8 @@ class SearchGUI(tk.Tk):
                     x2, y2 = self.problem.nodes[v]
                     c1 = self._world_to_canvas(x1, y1, bbox)
                     c2 = self._world_to_canvas(x2, y2, bbox)
-                    self.canvas.create_line(*c1, *c2, fill="#34a853", width=3)
+                    self.canvas.create_line(*c1, *c2, fill="#2ecc71", width=4)
+        
         def draw_nodes(ids, fill, outline, text_color="#ffffff"):
             for nid in ids:
                 if nid in self.problem.nodes:
@@ -667,16 +813,39 @@ class SearchGUI(tk.Tk):
         # Explored overlays
         draw_nodes(explored, fill="#5e97f6", outline="#1a73e8")
         draw_nodes(explored_back, fill="#ba68c8", outline="#8e24aa")
-        # Current
+        # Current node - make it very prominent with pulsing effect
         if current in self.problem.nodes:
             x, y = self.problem.nodes[current]
             cx, cy = self._world_to_canvas(x, y, bbox)
-            r = 22
-            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="#f9ab00", outline="#e37400", width=4)
-            self.canvas.create_text(cx, cy, text=str(current), fill="#ffffff", font=("Segoe UI", 11, "bold"))
+            # Outer glow rings (multiple for pulsing effect)
+            for r_glow in [30, 26]:
+                self.canvas.create_oval(cx - r_glow, cy - r_glow, cx + r_glow, cy + r_glow, 
+                                       outline="#f9ab00", width=2, dash=(4, 4))
+            # Main node - larger and more prominent
+            r = 25
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, fill="#f9ab00", outline="#e37400", width=6)
+            self.canvas.create_text(cx, cy, text=str(current), fill="#ffffff", font=("Segoe UI", 14, "bold"))
+        
+        # Draw step counter in top-left corner
+        step_num = self.trace_index + 1
+        total_steps = len(self.trace)
+        step_text = f"Step {step_num}/{total_steps}"
+        self.canvas.create_rectangle(10, 10, 120, 40, fill="#2c3e50", outline="#34495e", width=2)
+        self.canvas.create_text(65, 25, text=step_text, fill="#ecf0f1", font=("Segoe UI", 11, "bold"))
+        
+        # Draw action type indicator
+        action = step.get("action", "expand")
+        action_colors = {
+            "expand": "#3498db",
+            "goal": "#2ecc71",
+        }
+        action_color = action_colors.get(action, "#95a5a6")
+        action_text = action.upper() if action == "goal" else "Exploring"
+        self.canvas.create_rectangle(130, 10, 220, 40, fill=action_color, outline="#34495e", width=2)
+        self.canvas.create_text(175, 25, text=action_text, fill="#ffffff", font=("Segoe UI", 10, "bold"))
 
     def _draw_legend(self):
-        if not self.show_legend.get():
+        if not self.problem:
             return
         # Draw a compact legend in a corner that minimizes overlap with node positions
         w = max(self.canvas.winfo_width(), 1)
@@ -753,6 +922,133 @@ class SearchGUI(tk.Tk):
         item(y, "#ff8a65", "#d84315", "Frontier (back)")
         y += row_h
         item(y, "#ba68c8", "#8e24aa", "Explored (back)")
+    
+    def _redraw_tree_canvas(self):
+        """Draw the search tree structure."""
+        self.tree_canvas.delete("all")
+        
+        if not self.problem:
+            self.tree_canvas.create_text(
+                self.tree_canvas.winfo_width() // 2,
+                self.tree_canvas.winfo_height() // 2,
+                text="Load a test case to see search tree",
+                fill="#999",
+                font=("Segoe UI", 12, "italic"),
+            )
+            return
+        
+        # Get animation state if available
+        explored = set()
+        frontier = set()
+        current = None
+        
+        if self.trace and 0 <= self.trace_index < len(self.trace):
+            step = self.trace[self.trace_index]
+            explored = set(step.get("explored", [])) | set(step.get("explored_forward", []))
+            frontier = set(step.get("frontier", [])) | set(step.get("frontier_forward", []))
+            current = step.get("current")
+        
+        # Build complete tree from graph using BFS from origin
+        origin = self.problem.origin
+        visited = {origin}
+        tree_edges = []
+        node_parents = {origin: None}
+        queue = [origin]
+        
+        while queue:
+            parent = queue.pop(0)
+            neighbors = self.problem.get_neighbors(parent)
+            neighbors.sort(key=lambda x: x[0])
+            
+            for child, _ in neighbors:
+                if child not in visited:
+                    visited.add(child)
+                    node_parents[child] = parent
+                    tree_edges.append((parent, child))
+                    queue.append(child)
+        
+        # Calculate depths
+        node_depths = {}
+        
+        def calc_depth(node):
+            if node in node_depths:
+                return node_depths[node]
+            parent = node_parents.get(node)
+            if parent is None:
+                node_depths[node] = 0
+            else:
+                node_depths[node] = calc_depth(parent) + 1
+            return node_depths[node]
+        
+        for node in visited:
+            calc_depth(node)
+        
+        # Group by depth
+        levels = {}
+        for node, depth in node_depths.items():
+            if depth not in levels:
+                levels[depth] = []
+            levels[depth].append(node)
+        
+        # Sort nodes at each level
+        for depth in levels:
+            levels[depth].sort()
+        
+        # Calculate positions
+        canvas_w = max(400, self.tree_canvas.winfo_width())
+        canvas_h = max(400, self.tree_canvas.winfo_height())
+        
+        max_depth = max(levels.keys()) if levels else 0
+        v_spacing = min(80, max(50, (canvas_h - 80) // (max_depth + 1))) if max_depth > 0 else 80
+        
+        node_positions = {}
+        for depth, nodes in levels.items():
+            y = 40 + depth * v_spacing
+            count = len(nodes)
+            if count == 1:
+                node_positions[nodes[0]] = (canvas_w // 2, y)
+            else:
+                spacing = min(canvas_w // (count + 1), 120)
+                start_x = (canvas_w - (count - 1) * spacing) // 2
+                for i, node in enumerate(nodes):
+                    x = start_x + i * spacing
+                    node_positions[node] = (x, y)
+        
+        # Draw edges
+        for parent, child in tree_edges:
+            if parent in node_positions and child in node_positions:
+                px, py = node_positions[parent]
+                cx, cy = node_positions[child]
+                self.tree_canvas.create_line(px, py, cx, cy, fill="#d0d0d0", width=1.5,
+                                           arrow="last", arrowshape=(6, 8, 2), smooth=True)
+        
+        # Draw nodes - color based on animation state
+        for node, (x, y) in node_positions.items():
+            r = 14
+            
+            # Determine color based on animation state
+            if current and node == current:
+                fill, outline = "#f9ab00", "#e37400"  # Current (orange)
+                text_color = "#ffffff"
+            elif node in explored:
+                fill, outline = "#5e97f6", "#1a73e8"  # Explored (blue)
+                text_color = "#ffffff"
+            elif node in frontier:
+                fill, outline = "#fdd663", "#fbbc04"  # Frontier (yellow)
+                text_color = "#202124"
+            elif node == self.problem.origin:
+                fill, outline = "#27ae60", "#229954"  # Start (green)
+                text_color = "#ffffff"
+            elif node in self.problem.destinations:
+                fill, outline = "#e74c3c", "#c0392b"  # Goal (red)
+                text_color = "#ffffff"
+            else:
+                fill, outline = "#e8eaed", "#bdc3c7"  # Regular (light gray)
+                text_color = "#34495e"
+            
+            self.tree_canvas.create_oval(x - r, y - r, x + r, y + r, fill=fill, outline=outline, width=2)
+            self.tree_canvas.create_text(x, y, text=str(node), fill=text_color, font=("Segoe UI", 9, "bold"))
+    
     def _export_csv(self):
         if not self.results:
             messagebox.showinfo("No results", "Run algorithms first.")
